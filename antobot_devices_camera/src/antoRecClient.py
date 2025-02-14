@@ -15,7 +15,7 @@
 
 import rospy
 import rosservice
-from antobot_devices_msgs.srv import antoRec, antoRecRequest, antoRecResponse
+from antobot_camera_msgs.srv import cameraRecord, cameraRecordResponse
 
 
 class antoRecClient():
@@ -25,7 +25,7 @@ class antoRecClient():
 
         self.serviceName = serviceName
 
-        self.antoRecClient = rospy.ServiceProxy(self.serviceName, antoRec)
+        self.antoRecClient = rospy.ServiceProxy(self.serviceName, cameraRecord)
         self.command = command
         self.timestamp = timestamp
 

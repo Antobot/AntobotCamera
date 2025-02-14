@@ -25,8 +25,8 @@ from datetime import datetime
 from std_msgs.msg import Bool, String
 
 
-from antobot_devices_msgs.srv import camManager, camManagerResponse
-from antobot_devices_msgs.srv import antoRec, antoRecResponse
+from antobot_camera_msgs.srv import camManager, camManagerResponse
+from antobot_camera_msgs.srv import cameraRecord, cameraRecordResponse
 # from antobot_manager_jobs.updateProgressClient import progressUpdateClient
 from antoRecClient import antoRecClient
 
@@ -200,7 +200,7 @@ class Camera:
         
     def toggleOpen(self):
 
-        response = antoRecResponse()
+        response = cameraRecordResponse()
 
         serviceState = self.antoRecClient.checkForService()
         if serviceState:
