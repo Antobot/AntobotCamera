@@ -27,7 +27,6 @@ from std_msgs.msg import Bool, String
 
 from antobot_devices_msgs.srv import camManager, camManagerResponse
 from antobot_devices_msgs.srv import antoRec, antoRecResponse
-# from antobot_manager_jobs.updateProgressClient import progressUpdateClient
 from antoRecClient import antoRecClient
 
 
@@ -57,13 +56,10 @@ class cameraManager:
             print('Camera Manager: This is not a simulation - using real ZED2 camera commands.')
 
 
-        # Get ros parameters for cameras
-        #camera_config = rospy.get_param("/camera")
-
         # Create a service to allow other nodes to start/stop cameras
         self.srvCamMgr = rospy.Service("/antobot/camera_manager/camera", camManager, self._serviceCallbackCamMgr)
 
-        # self.updateClient = progressUpdateClient(state=0, sourceID='camManager')
+        
         
         self.pub_scout_light = rospy.Publisher("/antobot_manager_device/scout_light",Bool, queue_size=1)
 
@@ -156,30 +152,11 @@ class cameraManager:
                         rospy.loginfo(
                             f'SW2312: Camera Manager: Scouting light turn off')
 
-                    if return_msg.responseCode:
-                        self.updateClient.state = 1
-                    else:
-                        self.updateClient.state = 0
-
-                    # Report any changes to job manager
-                    self.updateJobManagerState()
-
             if not cams:
                 rospy.loginfo(f'SW2312: Camera Manager: No camera settings in the config file')
 
         return return_msg
 
-
-    # def updateJobManagerState(self):
-    #     """ Update the camera state in jobManager """
-# 
-    #     serviceState=self.updateClient.checkForService()
-    #     if serviceState: # If the service is available
-    #         managerResponse = self.updateClient.sendProgressUpdate()
-    #     else:
-    #         print('UV Manager: Unable to make request')
-    #         print('UV Manager: ROS service ' + self.updateClient.serviceName + ' is not available')
-    #         # TODO - Add an exception
 
 
 class Camera:
