@@ -30,8 +30,7 @@ import roslaunch # Using this until we develop our own camera manager solution
 
 from std_msgs.msg import Bool, Int16
 from sensor_msgs.msg import Temperature
-from anto_msgs.srv import camManager, camManagerResponse
-from AntoVision.msg import cam_info
+from antobot_camera_msgs.srv import camManager, camManagerResponse
 from sensor_msgs.msg import LaserScan
 from diagnostic_msgs.msg import DiagnosticStatus
 

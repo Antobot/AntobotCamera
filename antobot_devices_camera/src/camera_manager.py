@@ -25,9 +25,9 @@ from datetime import datetime
 from std_msgs.msg import Bool, String
 
 
-from antobot_devices_msgs.srv import camManager, camManagerResponse
-from antobot_devices_msgs.srv import antoRec, antoRecResponse
-from antoRecClient import antoRecClient
+from antobot_camera_msgs.srv import camManager, camManagerResponse
+from antobot_camera_msgs.srv import cameraRecord, cameraRecordResponse
+from AntobotDevices.AntobotCamera.antobot_devices_camera.src.cameraRecordClient import cameraRecordClient
 
 
 
@@ -168,7 +168,7 @@ class Camera:
         self.location = location
         self.filename = None
 
-        self.antoRecClient = antoRecClient(command=0, timestamp='', serviceName=serviceName)
+        self.cameraRecordClient = cameraRecordClient(command=0, timestamp='', serviceName=serviceName)
         self.rec_manager_timestamp_sub = rospy.Subscriber("/recManager/timestamp",String,self.timestamp_callback)
 
     def timestamp_callback(self,data):
@@ -177,16 +177,16 @@ class Camera:
         
     def toggleOpen(self):
 
-        response = antoRecResponse()
+        response = cameraRecordResponse()
 
-        serviceState = self.antoRecClient.checkForService()
+        serviceState = self.cameraRecordClient.checkForService()
         if serviceState:
 
             timestamp = datetime.now().strftime("%d_%m_%Y_%H_%M_%S")
-            self.antoRecClient.command = 1 if self.isOpen else 0
-            self.antoRecClient.timestamp = timestamp
+            self.cameraRecordClient.command = 1 if self.isOpen else 0
+            self.cameraRecordClient.timestamp = timestamp
 
-            response = self.antoRecClient.sendCameraCommand()
+            response = self.cameraRecordClient.sendCameraCommand()
 
             if response.responseCode:
                 self.isOpen = not self.isOpen
@@ -194,26 +194,26 @@ class Camera:
         else:
             rospy.loginfo('SW2312: CameraManager - Unable to make request - toggle camera open state')
             rospy.loginfo(
-                'SW2312: CameraManager - ROS service ' + self.antoRecClient.serviceName + ' is not available')
+                'SW2312: CameraManager - ROS service ' + self.cameraRecordClient.serviceName + ' is not available')
 
         return response
 
 
     def toggleRecording(self):
 
-        response = antoRecResponse()
+        response = cameraRecordResponse()
 
-        serviceState = self.antoRecClient.checkForService()
+        serviceState = self.cameraRecordClient.checkForService()
         if serviceState:
 
             timestamp = datetime.now().strftime("%d_%m_%Y_%H_%M_%S")
-            self.antoRecClient.command = 3 if self.isRecording else 2
+            self.cameraRecordClient.command = 3 if self.isRecording else 2
             if self.filename is not None:
                 date_part,time_H,time_M,time_S=timestamp.rsplit('_',3)
                 timestamp = f"{date_part}_{self.filename}"
-            self.antoRecClient.timestamp = timestamp
+            self.cameraRecordClient.timestamp = timestamp
 
-            response = self.antoRecClient.sendCameraCommand()
+            response = self.cameraRecordClient.sendCameraCommand()
 
             if response.responseCode:
                 self.isRecording = not self.isRecording
@@ -221,7 +221,7 @@ class Camera:
         else:
             rospy.loginfo('SW2312: CameraManager - Unable to make request - toggle camera recording state')
             rospy.loginfo(
-                'SW2312: CameraManager - ROS service ' + self.antoRecClient.serviceName + ' is not available')
+                'SW2312: CameraManager - ROS service ' + self.cameraRecordClient.serviceName + ' is not available')
 
         return response
 

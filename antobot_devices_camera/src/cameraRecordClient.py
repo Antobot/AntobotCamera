@@ -15,17 +15,17 @@
 
 import rospy
 import rosservice
-from antobot_devices_msgs.srv import antoRec, antoRecRequest, antoRecResponse
+from antobot_camera_msgs.srv import cameraRecord, cameraRecordResponse
 
 
-class antoRecClient():
+class cameraRecordClient():
     """A class that handles a client to provide updates to higher level nodes"""
 
     def __init__(self, command, timestamp, serviceName):
 
         self.serviceName = serviceName
 
-        self.antoRecClient = rospy.ServiceProxy(self.serviceName, antoRec)
+        self.cameraRecordClient = rospy.ServiceProxy(self.serviceName, cameraRecord)
         self.command = command
         self.timestamp = timestamp
 
@@ -45,7 +45,7 @@ class antoRecClient():
         # camCommand.command=self.command
 
         try:
-            response = self.antoRecClient(self.command, self.timestamp)
+            response = self.cameraRecordClient(self.command, self.timestamp)
             return response
 
         except rospy.ServiceException as e:
@@ -55,13 +55,13 @@ class antoRecClient():
 if __name__ == "__main__":
 
     # Create the class to handle client-side interaction
-    antoRecClient = antoRecClient(command=2, timestamp='2024_06_28_14_16_00', serviceName='/antobot/camera_record/left')
+    cameraRecordClient = cameraRecordClient(command=2, timestamp='2024_06_28_14_16_00', serviceName='/antobot/camera_record/left')
 
     # Check that the service is availble before trying to send requests
-    serviceState = antoRecClient.checkForService()
+    serviceState = cameraRecordClient.checkForService()
 
     if serviceState:  # If the service is available
-        camManagerResponse = antoRecClient.sendCameraCommand()
+        camManagerResponse = cameraRecordClient.sendCameraCommand()
     else:
         print('Unable to make request')
-        print('ROS service ' + antoRecClient.serviceName + ' is not available')
+        print('ROS service ' + cameraRecordClient.serviceName + ' is not available')
