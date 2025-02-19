@@ -49,6 +49,7 @@ class ZedCamera:
         return self.cam.grab(self.runtime) == sl.ERROR_CODE.SUCCESS
 
     def adjust_exposure(self, datetime_obj):
+        # todo: fix
         if not (t(17, 0) < datetime_obj.time() or datetime_obj.time() < t(6, 0)):
             # perform auto exposure every 5 seconds
             current_time = self.cam.get_timestamp(sl.TIME_REFERENCE.CURRENT).get_seconds()
@@ -85,7 +86,8 @@ class ZedCamera:
         cv2.destroyAllWindows()
         self.cam.close()
 
-    def start_recording(self, output_basename, datetime_obj):
+    def start_recording(self, output_basename):
+
         """
         Function to enable record the footage from the zed camera.
 
@@ -99,10 +101,12 @@ class ZedCamera:
         if err != sl.ERROR_CODE.SUCCESS:
             return err == sl.ERROR_CODE.SUCCESS
 
-        if t(17, 0) < datetime_obj.time() or datetime_obj.time() < t(6, 0):
-            self.cam.set_camera_settings(sl.VIDEO_SETTINGS.GAIN, 10)
-            self.cam.set_camera_settings(sl.VIDEO_SETTINGS.EXPOSURE, 50)
-            self.cam.set_camera_settings(sl.VIDEO_SETTINGS.WHITEBALANCE_TEMPERATURE, 5000)
+        # todo: fix
+
+        # if t(17, 0) < datetime_obj.time() or datetime_obj.time() < t(6, 0):
+        #     self.cam.set_camera_settings(sl.VIDEO_SETTINGS.GAIN, 10)
+        #     self.cam.set_camera_settings(sl.VIDEO_SETTINGS.EXPOSURE, 50)
+        #     self.cam.set_camera_settings(sl.VIDEO_SETTINGS.WHITEBALANCE_TEMPERATURE, 5000)
 
 
         return err == sl.ERROR_CODE.SUCCESS

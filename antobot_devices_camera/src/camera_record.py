@@ -41,7 +41,7 @@ from datetime import time as t
 import rospy
 import rostopic
 import tf2_ros
-from antobot_manager_msgs.srv import cameraRecord, cameraRecordResponse
+from antobot_camera_msgs.srv import cameraRecord, cameraRecordResponse
 from sensor_msgs.msg import NavSatFix   
 
 
@@ -73,7 +73,7 @@ def is_master_running():
             os._exit(1)
 
 
-class cameraRecord:
+class camRecord:
     def __init__(self, argv=None):
         """
         Initialises a new cameraRecord class object.
@@ -88,15 +88,17 @@ class cameraRecord:
 
 
         # Create and setup camera
+        cam_position = self.hostname.split('-')[1]
         if self.hostname.startswith('carrierboard'):
-            from zed_cam import ZedCamera
+            from antobot_devices_camera.zed_cam import ZedCamera
             self.cam = ZedCamera()
+            self.cam_name = f'zed_{cam_position}'
             self.srv_name = f'/antobot_devices_camera/zed/recording/{cam_position}'
             
         elif self.hostname.startswith('raspberrypi'):
-            from rpi_insight_camera import RPiInsightCamera
+            from antobot_devices_camera.rpi_insight_camera import RPiInsightCamera
             self.cam = RPiInsightCamera(preview=False, raw=False, framerate=50)
-            cam_position = self.hostname.split('_')[1]
+            self.cam_name = f'RP_{cam_position}'
             self.srv_name = f'/antobot_devices_camera/RP/recording/{cam_position}'
 
         
@@ -118,7 +120,7 @@ class cameraRecord:
         self.master_check_thread = threading.Thread(target=is_master_running)
         self.master_check_thread.start()
 
-        self.use_gps = True
+        self.use_gps = False
         if self.use_gps:
             self.robot_gps_sub = rospy.Subscriber("/am_gps_urcu", NavSatFix, self.gps_callback)
         self.gps = []
@@ -141,7 +143,7 @@ class cameraRecord:
                     self.retrieve_gps()
 
                 if hasattr(self.cam, 'adjust_exposure'):
-                    self.cam.adjust_exposure(self.datetime_obj)
+                    self.cam.adjust_exposure(self.output_basename)
 
     def manage_disk_space(self):
         # check disk usage
@@ -314,7 +316,7 @@ class cameraRecord:
             self.json_dict['gps'] = []
 
         # Setup and start encoders
-        self.cam.start_recording(self.output_basename, self.datetime_obj)
+        self.cam.start_recording(self.output_basename)
         self.stop_signal = False
 
         # Thread to run camera recording loop (Each thread can only be started once, don't put it into the init function)
@@ -351,7 +353,6 @@ class cameraRecord:
             
             # Write metadata
             self.dict2json()
-            self.update_file_info()
 
         # Check recording has stopped
         if not self.is_cam_recording():
@@ -436,9 +437,9 @@ class cameraRecord:
 
 
 if __name__ == "__main__":
-    try:
-        rospy.loginfo(f"SW4100: cameraRecord Node launched")
-        avRec = cameraRecord()
-    except Exception as e:
-        print(e)
-        rospy.loginfo(f"SW4101: cameraRecord Node died: {e}")
+    # try:
+    rospy.loginfo(f"SW4100: cameraRecord Node launched")
+    avRec = camRecord()
+    # except Exception as e:
+    #     print(e)
+    #     rospy.loginfo(f"SW4101: cameraRecord Node died: {e}")

@@ -27,8 +27,10 @@ generate_messages(
 catkin_package(
   CATKIN_DEPENDS 
     std_msgs
+    message_runtime  # Ensure generated messages are usable
 )
 
+add_dependencies(${PROJECT_NAME}_generate_messages_cpp ${catkin_EXPORTED_TARGETS})
 
 include_directories(
   include

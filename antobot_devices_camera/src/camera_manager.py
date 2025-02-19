@@ -27,7 +27,7 @@ from std_msgs.msg import Bool, String
 
 from antobot_camera_msgs.srv import camManager, camManagerResponse
 from antobot_camera_msgs.srv import cameraRecord, cameraRecordResponse
-from AntobotDevices.AntobotCamera.antobot_devices_camera.src.cameraRecordClient import cameraRecordClient
+from cameraRecordClient import cameraRecordClient
 
 
 
