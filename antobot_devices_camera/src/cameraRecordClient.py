@@ -21,13 +21,13 @@ from antobot_camera_msgs.srv import cameraRecord, cameraRecordResponse
 class cameraRecordClient():
     """A class that handles a client to provide updates to higher level nodes"""
 
-    def __init__(self, command, timestamp, serviceName):
+    def __init__(self, command, recording_basename, serviceName):
 
         self.serviceName = serviceName
 
         self.cameraRecordClient = rospy.ServiceProxy(self.serviceName, cameraRecord)
         self.command = command
-        self.timestamp = timestamp
+        self.recording_basename = recording_basename
 
     def checkForService(self):
         service_list = rosservice.get_service_list()
@@ -45,7 +45,7 @@ class cameraRecordClient():
         # camCommand.command=self.command
 
         try:
-            response = self.cameraRecordClient(self.command, self.timestamp)
+            response = self.cameraRecordClient(self.command, self.recording_basename)
             return response
 
         except rospy.ServiceException as e:
@@ -55,7 +55,7 @@ class cameraRecordClient():
 if __name__ == "__main__":
 
     # Create the class to handle client-side interaction
-    cameraRecordClient = cameraRecordClient(command=2, timestamp='2024_06_28_14_16_00', serviceName='/antobot/camera_record/left')
+    cameraRecordClient = cameraRecordClient(command=2, recording_basename='2024_06_28_14_16_00', serviceName='/antobot/camera_record/left')
 
     # Check that the service is availble before trying to send requests
     serviceState = cameraRecordClient.checkForService()
