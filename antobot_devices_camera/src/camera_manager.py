@@ -53,7 +53,7 @@ class cameraManager:
         if self.sim:
             print('Camera Manager: This is a simulation - using fake camera calls.')
         else:
-            print('Camera Manager: This is not a simulation - using real ZED2 camera commands.')
+            print('Camera Manager: This is not a simulation - using real ZED2/Raspberry pi camera commands.')
 
 
         # Create a service to allow other nodes to start/stop cameras
@@ -112,6 +112,8 @@ class cameraManager:
         return_msg = camManagerResponse()
         cams = None
 
+        recording_basename = request.recording_basename
+
         if request.command == 2:  # toggle camera open state
             if request.camera_num == 3:  # left camera
                 cams = self.cameras['left']
@@ -138,7 +140,7 @@ class cameraManager:
             for cam in cams.values():
                 rospy.loginfo(f'SW2312: Camera Manager: {cam.location} {cam.camType} camera recording state: {cam.isRecording}')
                 rospy.loginfo(f'SW2312: Camera Manager: Make request to toggle {cam.location} {cam.camType} camera recording state')
-                response = cam.toggleRecording()
+                response = cam.toggleRecording(recording_basename)
                 return_msg.responseCode = response.responseCode
                 return_msg.responseString = response.responseString
 
@@ -166,14 +168,9 @@ class Camera:
         self.isOpen = False
         self.isRecording = False
         self.location = location
-        self.filename = None
 
-        self.cameraRecordClient = cameraRecordClient(command=0, timestamp='', serviceName=serviceName)
-        self.rec_manager_timestamp_sub = rospy.Subscriber("/recManager/timestamp",String,self.timestamp_callback)
+        self.cameraRecordClient = cameraRecordClient(command=0, recording_basename='', serviceName=serviceName)
 
-    def timestamp_callback(self,data):
-        self.filename = data.data
-        return
         
     def toggleOpen(self):
 
@@ -182,10 +179,7 @@ class Camera:
         serviceState = self.cameraRecordClient.checkForService()
         if serviceState:
 
-            timestamp = datetime.now().strftime("%d_%m_%Y_%H_%M_%S")
             self.cameraRecordClient.command = 1 if self.isOpen else 0
-            self.cameraRecordClient.timestamp = timestamp
-
             response = self.cameraRecordClient.sendCameraCommand()
 
             if response.responseCode:
@@ -199,19 +193,15 @@ class Camera:
         return response
 
 
-    def toggleRecording(self):
+    def toggleRecording(self, recording_basename):
 
         response = cameraRecordResponse()
 
         serviceState = self.cameraRecordClient.checkForService()
         if serviceState:
 
-            timestamp = datetime.now().strftime("%d_%m_%Y_%H_%M_%S")
             self.cameraRecordClient.command = 3 if self.isRecording else 2
-            if self.filename is not None:
-                date_part,time_H,time_M,time_S=timestamp.rsplit('_',3)
-                timestamp = f"{date_part}_{self.filename}"
-            self.cameraRecordClient.timestamp = timestamp
+            self.cameraRecordClient.recording_basename = recording_basename
 
             response = self.cameraRecordClient.sendCameraCommand()
 
