@@ -216,7 +216,13 @@ class camRecord:
         #     START RECORDING
         # -----------------------
         elif request.command == 2:
-            self.output_basename = request.recordingBasename
+
+            # update recording directory if the raspberry pi is not master device
+            rec_path = request.recordingBasename
+            name_start = rec_path.find('catkin_ws')
+            username = os.getlogin() 
+            self.output_basename = os.path.join('/home', username, rec_path[name_start:])
+
             success = self.start_recording()
 
             if success:
