@@ -52,20 +52,33 @@ class RPiInsightCamera:
         # Save requested streams
         self.enable_preview = preview
         self.enable_raw = raw
-        
+
+        # Attributes
+        self.vid_extension = 'h264'
+        self.framerate = framerate
+
+        # let's init to check we can open it and setup encoders etc.
+        self.init_camera()
+        self.cam.close()
+    
+    def init_camera(self):
+
+        # NB, once a camera closed, need to make a new instance of Picamera2() to open again
+        # TODO: error check whether a camera is already open
+
         # Create camera object with custom tuning file
         tuning_file = self.load_tuning_file()
         self.cam = Picamera2(tuning=tuning_file)
 
         # Create raw and preview configurations if they have been requested
-        if preview:
+        if self.enable_preview:
             lores_config = {'size': (1014,540)}
             display_config = "lores"
         else:
             lores_config = None
             display_config = None
 
-        if raw:
+        if self.enable_raw:
             raw_config = {
                 'size': (2028,1080),
                 'format': 'SGBRG12'
@@ -84,7 +97,7 @@ class RPiInsightCamera:
             }, 
             # set frame rate; 50 fps max in this sensor mode
             controls={
-                'FrameRate': framerate
+                'FrameRate': self.framerate
             },
             main={
                 'size': (2028,1080),
@@ -130,20 +143,23 @@ class RPiInsightCamera:
         # Capture request from camera system
         request = self.cam.capture_request(flush=False)
         
-        #TODO: save metadata
-        # md = request.get_metadata()
-        # metadata.append(md)
-        # ts.append(md['SensorTimestamp'])
+        # Get camera metadata
+        md = request.get_metadata()
+        md_keys = ("SensorTimestamp",)
+        # md_keys = ("SensorTimestamp", "ExposureTime", "AnalogueGain", "Lux", "ColourGains")
                 
         # Encode frame from the request
         self.main_encoder.encode("main", request)
+        
+        # If raw is enabled, encode frame and use all metadata keys
         if self.enable_raw:
             self.raw_encoder.encode("raw", request)
+            md_keys = md.keys()
         
         # Return request to the camera system
         request.release()
 
-        return True
+        return {k: md[k] for k in md_keys}
 
     def is_recording_started(self):
         """
@@ -175,6 +191,9 @@ class RPiInsightCamera:
         camera was initialised.
         """
         
+        #Init camera here, rather than with class
+        self.init_camera()
+
         if self.enable_preview:
             self.cam.start_preview(Preview.QTGL)
 
