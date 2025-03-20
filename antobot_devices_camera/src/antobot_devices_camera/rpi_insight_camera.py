@@ -52,20 +52,27 @@ class RPiInsightCamera:
         # Save requested streams
         self.enable_preview = preview
         self.enable_raw = raw
+        self.framerate = framerate
+        self.preview = preview
+        self.raw = raw
         
+        self.init_cam()
+
+    
+    def init_cam(self):
         # Create camera object with custom tuning file
         tuning_file = self.load_tuning_file()
         self.cam = Picamera2(tuning=tuning_file)
 
         # Create raw and preview configurations if they have been requested
-        if preview:
+        if self.preview:
             lores_config = {'size': (1014,540)}
             display_config = "lores"
         else:
             lores_config = None
             display_config = None
 
-        if raw:
+        if self.raw:
             raw_config = {
                 'size': (2028,1080),
                 'format': 'SGBRG12'
@@ -84,7 +91,7 @@ class RPiInsightCamera:
             }, 
             # set frame rate; 50 fps max in this sensor mode
             controls={
-                'FrameRate': framerate
+                'FrameRate': self.framerate
             },
             main={
                 'size': (2028,1080),
@@ -171,17 +178,27 @@ class RPiInsightCamera:
     
     def open_camera(self):
         """
-        Starts camera and starts preview in a window if requested when
-        camera was initialised.
+        Starts the camera and initializes preview if requested.
+        If an error occurs, it reinitializes the camera.
         """
-        
-        if self.enable_preview:
-            self.cam.start_preview(Preview.QTGL)
+        try:
+            # Attempt to start the camera
+            if not self.cam.started:
+                self.cam.start()
+                time.sleep(1)
+                
+        except Exception as e:
+            print(f"Error encountered: {e}. Reinitializing camera...")
 
-        self.cam.start()
-        
-        # Sleep for 1 second to allow camera algorithms to settle before any recording can start
-        time.sleep(1) 
+            # Fully reinitialize the camera
+            self.cam = None  # Remove the old instance
+            self.init_cam()
+
+            if self.enable_preview:
+                self.cam.start_preview(Preview.QTGL)
+
+            self.cam.start()
+            time.sleep(1)
 
 
     def start_recording(self, filepath):

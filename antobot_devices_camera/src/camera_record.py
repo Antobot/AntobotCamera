@@ -219,9 +219,9 @@ class camRecord:
 
             # update recording directory if the raspberry pi is not master device
             rec_path = request.recordingBasename
-            name_start = rec_path.find('catkin_ws')
+            name_start = rec_path.find('AntoManager')
             username = os.getlogin() 
-            self.output_basename = os.path.join('/home', username, rec_path[name_start:])
+            self.output_basename = os.path.join('/home', username, 'catkin_ws/src/scoutRecord', rec_path[name_start:])
 
             success = self.start_recording()
 
