@@ -187,8 +187,8 @@ class RPiInsightCamera:
     
     def open_camera(self):
         """
-        Starts the camera and initializes preview if requested.
-        If an error occurs, it reinitializes the camera.
+        Starts camera and starts preview in a window if requested when
+        camera was initialised.
         """
         
         #Init camera here, rather than with class
@@ -197,15 +197,10 @@ class RPiInsightCamera:
         if self.enable_preview:
             self.cam.start_preview(Preview.QTGL)
 
-            # Fully reinitialize the camera
-            self.cam = None  # Remove the old instance
-            self.init_cam()
-
-            if self.enable_preview:
-                self.cam.start_preview(Preview.QTGL)
-
-            self.cam.start()
-            time.sleep(1)
+        self.cam.start()
+        
+        # Sleep for 1 second to allow camera algorithms to settle before any recording can start
+        time.sleep(1) 
 
 
     def start_recording(self, filepath):
