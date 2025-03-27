@@ -88,20 +88,23 @@ class camRecord:
 
 
         # Create and setup camera
-        cam_position = self.hostname.split('-')[1]
+        cam_position = 'left' #self.hostname.split('-')[1]
         if self.hostname.startswith('carrierboard'):
             from antobot_devices_camera.zed_cam import ZedCamera
             self.cam = ZedCamera()
             self.cam_name = f'zed_{cam_position}'
             self.srv_name = f'/antobot_devices_camera/zed/recording/{cam_position}'
             
-        elif self.hostname.startswith('raspberrypi'):
+        elif self.hostname.startswith('insight-pi'):
             from antobot_devices_camera.rpi_insight_camera import RPiInsightCamera
             self.cam = RPiInsightCamera(preview=False, raw=False, framerate=50)
             self.cam_name = f'RP_{cam_position}'
             self.srv_name = f'/antobot_devices_camera/RP/recording/{cam_position}'
 
-        
+        self.enable_stream = True
+        if self.enable_stream:
+            from preview_streamer import PreviewStreamer
+            self.streamer = PreviewStreamer(self.cam.stream_track)
        
         self.output_basename = None
 
@@ -112,8 +115,8 @@ class camRecord:
 
         rospy.init_node(self.cam_name, anonymous=False)
         self.srvcameraRecord = rospy.Service(self.srv_name, cameraRecord, self._serviceCallbackcameraRecord)
-        self.json_dict = self.init_transforms()
-        self.stop_signal = False
+        self.json_dict = self.init_metadata()
+        
 
         # self.manage_disk_space()
 
@@ -127,7 +130,7 @@ class camRecord:
 
         signal(SIGINT, self.signal_handler)  # Allow interrupt from keyboard (CTRL + C).
 
-        rospy.spin()
+        # rospy.spin()
 
     def cam_rec_loop(self):
         """
@@ -156,7 +159,7 @@ class camRecord:
         # TODO: this function doesn't work if backup is already empty....
 
 
-    def init_transforms(self):
+    def init_metadata(self):
         """
         Initialises a dictionary to save map origin and map to zed transforms
 
@@ -164,10 +167,23 @@ class camRecord:
             json_dict (dict): initialised dictionary including map origin
 
         """
+        # Are these lines used?
         self.tfBuffer = tf2_ros.Buffer()
         self.listener = tf2_ros.TransformListener(self.tfBuffer)
+
+        # Time
+        time_sync = {
+            'rospy_now': rospy.Time.now().to_nsec(),
+            'monotonic_now': time.monotonic_ns()
+        }
         # Initialise a dictionary to convert ros msg to json file
-        json_dict = dict(origin=dict(longitude=0, latitude=0), gps=[])
+        json_dict = {
+            'origin': {'longitude': 0, 'latitude': 0},
+            'gps': [],
+            'cam_metadata': [],
+            'time_sync': time_sync,
+            'cam_name': self.cam_name
+        }
 
         return json_dict
     
@@ -316,6 +332,9 @@ class camRecord:
         if self.is_cam_recording():
             return True
 
+        # clear dict
+        self.json_dict = self.init_metadata()
+
         if self.use_gps:
             self.json_dict['origin']['latitude'] = rospy.get_param('/GPS_origin/latitude')
             self.json_dict['origin']['longitude'] = rospy.get_param('/GPS_origin/longitude')
@@ -323,12 +342,6 @@ class camRecord:
 
         # Setup and start encoders
         self.cam.start_recording(self.output_basename)
-        self.stop_signal = False
-
-        # Thread to run camera recording loop (Each thread can only be started once, don't put it into the init function)
-        self.cam_loop_thread = threading.Thread(target=self.cam_rec_loop)
-        # start camera loop
-        self.cam_loop_thread.start()
 
         # Check recording has started
         if self.is_cam_recording():
@@ -349,16 +362,12 @@ class camRecord:
         if not self.is_cam_recording():
             return True
         
-        # if recording hasn't been stopped, stop it first
+        # if recording hasn't been stopped, stop it
         if self.is_cam_recording():
-            self.cam.stop_recording()
-
-            # Send stop signal and wait for loop to finish
-            self.stop_signal = True
-            self.cam_loop_thread.join()
             
-            # Write metadata
-            self.dict2json()
+            # Stop recording and store camera per frame metadata
+            self.json_dict['cam_metadata'] = self.cam.stop_recording()          
+            self.write_metadata()
 
         # Check recording has stopped
         if not self.is_cam_recording():
@@ -378,7 +387,7 @@ class camRecord:
         Returns:
             out (bool): True if camera is recording
         """
-        return self.cam.is_recording_started() and self.cam_loop_thread.is_alive()
+        return self.cam.is_recording()
 
 
     def signal_handler(self, signal_received, frame):
@@ -393,23 +402,23 @@ class camRecord:
         self.close_camera()
         exit(0)
 
-    def gps_callback(self, gps):
-        lat = gps.latitude
-        long = gps.longitude
-        self.gps.append((lat, long))
+    def gps_callback(self, msg):
+        
+        if self.rec_gps:
+            # Put data from message into dictionary
+            entry = {
+                'time': msg.header.stamp.to_nsec(),
+                'lat': msg.latitude,
+                'lon': msg.longitude,
+                'alt': msg.altitude
+            }
 
-    def retrieve_gps(self):
+            # Write to metadata dict
+            self.json_dict['gps'].append(entry)
+
+    def write_metadata(self):
         """
-        Retrieve robot gps of current frame and save it to a dictionary.
-
-        """
-
-        gps_dict = dict(lat=self.gps[-1][0], long=self.gps[-1][1])
-        self.json_dict["gps"].append(gps_dict)
-
-    def dict2json(self):
-        """
-        Dump the camera pose to a json file.
+        Dump metadata for one recording to a json file.
 
         """
         filename = f"{self.output_basename}.json"
@@ -449,3 +458,4 @@ if __name__ == "__main__":
     # except Exception as e:
     #     print(e)
     #     rospy.loginfo(f"SW4101: cameraRecord Node died: {e}")
+    avRec.streamer.run()

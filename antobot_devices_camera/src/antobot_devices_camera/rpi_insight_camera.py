@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 # Copyright (c) 2024, ANTOBOT LTD.
 # All rights reserved.
 
@@ -26,11 +26,70 @@
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 import time
+import threading
 
 from picamera2 import Picamera2, Preview
 from picamera2.encoders import H264Encoder, Encoder
 from picamera2.outputs import FileOutput
 from libcamera import controls
+
+from aiortc import VideoStreamTrack
+from av import VideoFrame
+from av.video.reformatter import Interpolation
+
+import numpy as np
+import math
+
+class CameraStreamTrack(VideoStreamTrack):
+    """
+    A video track that captures frames from a callback to the pi camera request
+    """
+    def __init__(self, read_array_callback):
+        super().__init__()
+        
+        self.read_frame = read_array_callback
+        
+        self.width = 270
+        self.height = 507
+
+    def set_size(self, width, height):
+        # container dims
+        self.hc = height
+        self.wc = width
+
+    async def recv(self):
+        pts, time_base = await self.next_timestamp()
+
+        frame = self.read_frame()  # Capture a frame
+
+        frame = np.rot90(frame)
+
+        hf,wf,_ = frame.shape
+        
+        if hf/self.hc > wf/self.wc:
+            height = self.hc
+            width = math.floor(wf/hf * height)
+        else:
+            width = self.wc
+            height = math.floor(hf/wf * width)
+
+
+
+        # rotate and resize
+        # video_frame = VideoFrame(width=640, height=480)
+        video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
+
+        # video_frame = video_frame.reformat(self.width, self.height)
+        video_frame = video_frame.reformat(width, height)
+
+        video_frame.pts = pts
+        video_frame.time_base = time_base
+        
+        return video_frame
+
+    def stop(self):
+        print('stopping camera')
+        
 
 
 class RPiInsightCamera:
@@ -57,6 +116,17 @@ class RPiInsightCamera:
         self.vid_extension = 'h264'
         self.framerate = framerate
 
+        self.frame_lock = threading.Lock() # lock whilst a frame is being processed/encoded 
+        self.request_lock = threading.Lock() # lock for reading/writing picamera requests
+
+        self.latest_request = None 
+        self.stream_track = None
+
+        self.close_flag = True # signal that cam loop should close
+        self.record_flag = False # signal that cam loop should record (encode) frames
+        self.camera_loop_thread = None
+        self.frame_metadata = [] # each entry is a dictionary of metadata for each frame
+
         # let's init to check we can open it and setup encoders etc.
         self.init_camera()
         self.cam.close()
@@ -64,7 +134,6 @@ class RPiInsightCamera:
     def init_camera(self):
 
         # NB, once a camera closed, need to make a new instance of Picamera2() to open again
-        # TODO: error check whether a camera is already open
 
         # Create camera object with custom tuning file
         tuning_file = self.load_tuning_file()
@@ -133,35 +202,56 @@ class RPiInsightCamera:
             self.raw_encoder.size = config["raw"]["size"]
             self.raw_encoder.format = config["raw"]["format"]
 
-    def run_frame_capture(self):
-        """
-        Method to be called from a high-frequecy loop during camera recording.
-        Obtains capture request from the camera system and encodes the frame.
-        `start_recording()` must be called first.
-        """
-        
-        # Capture request from camera system
-        request = self.cam.capture_request(flush=False)
-        
-        # Get camera metadata
-        md = request.get_metadata()
-        md_keys = ("SensorTimestamp",)
-        # md_keys = ("SensorTimestamp", "ExposureTime", "AnalogueGain", "Lux", "ColourGains")
-                
-        # Encode frame from the request
-        self.main_encoder.encode("main", request)
-        
-        # If raw is enabled, encode frame and use all metadata keys
-        if self.enable_raw:
-            self.raw_encoder.encode("raw", request)
-            md_keys = md.keys()
-        
-        # Return request to the camera system
-        request.release()
+        # Create video track for stream
+        self.stream_track = CameraStreamTrack(self.read_request_array)
 
-        return {k: md[k] for k in md_keys}
+    def read_request_array(self):
+        if self.latest_request is not None:
+            with self.request_lock:
+                return self.latest_request.make_array('main')
+        else:
+            return None
+        
+    
+    def camera_loop(self):
+        """
+        shall run when camera is open
+        when running, save requests for stream
+        when recording, encode requests and store metadata
+        """
 
-    def is_recording_started(self):
+        # Run loop until close flag is set
+        while not self.close_flag:
+            
+            # Capture request from camera system
+            request = self.cam.capture_request(flush=False)
+
+            # Update saved request
+            with self.request_lock:
+                self.latest_request.release()
+                self.latest_request = request
+
+            # Use a lock to ensure a frame is fully processed (all encoders and metadata)
+            # Note, whilst each pi camera function (e.g. encode) is thread safe, we don't want a mismatch of metadata and video frames
+            with self.frame_lock:
+                if self.record_flag:
+                    # Get camera metadata
+                    md = request.get_metadata()
+                    md_keys = ("SensorTimestamp",)
+                    # md_keys = ("SensorTimestamp", "ExposureTime", "AnalogueGain", "Lux", "ColourGains")
+                            
+                    # Encode frame from the request
+                    self.main_encoder.encode("main", request)
+                    
+                    # If raw is enabled, encode frame and use all metadata keys
+                    if self.enable_raw:
+                        self.raw_encoder.encode("raw", request)
+                        md_keys = md.keys()
+                    
+                    # Add this frame's metadata
+                    self.frame_metadata.append({k: md[k] for k in md_keys})
+
+    def is_recording(self):
         """
         Returns True if the main recording encoder has started and is ready to
         receive frames to encode and save to a file.
@@ -172,7 +262,7 @@ class RPiInsightCamera:
         Returns:
             out (bool): True if the main encoder is running
         """
-        return self.main_encoder.running
+        return self.is_open() and self.main_encoder.running
     
     def is_open(self):
         """
@@ -183,7 +273,7 @@ class RPiInsightCamera:
         Returns:
             out (bool): True if the camera is running
         """
-        return self.cam.started
+        return self.cam.started and self.cam_loop_thread.is_alive()
     
     def open_camera(self):
         """
@@ -202,6 +292,15 @@ class RPiInsightCamera:
         # Sleep for 1 second to allow camera algorithms to settle before any recording can start
         time.sleep(1) 
 
+        # Flush camera requests and set initial request
+        self.latest_request = self.cam.capture_request(flush=True)
+
+        # Create and start camera loop thread
+        self.close_flag = False
+        self.record_flag = False
+        self.cam_loop_thread = threading.Thread(target=self.camera_loop)
+        self.cam_loop_thread.start()
+
 
     def start_recording(self, filepath):
         """
@@ -212,21 +311,29 @@ class RPiInsightCamera:
         """
         # TODO: error checking on path
 
-        # Append extension to file path and assign encoder output
-        full_path_main = f"{filepath}.h264"
-        self.main_encoder.output = FileOutput(full_path_main)
-        
-        # Assign raw stream outputs
-        if self.enable_raw:
+        # Use frame lock so we don't reconfigure encoders whilst they are being written
+        with self.frame_lock:
+            # Append extension to file path and assign encoder output
+            full_path_main = f"{filepath}.h264"
+            self.main_encoder.output = FileOutput(full_path_main)
             
-            raw_vid_path = f"{filepath}.raw"
-            raw_pts_path = f"{filepath}_pts.txt"
-            self.raw_encoder.output = FileOutput(raw_vid_path, raw_pts_path)
+            # Assign raw stream outputs
+            if self.enable_raw:
+                
+                raw_vid_path = f"{filepath}.raw"
+                raw_pts_path = f"{filepath}_pts.txt"
+                self.raw_encoder.output = FileOutput(raw_vid_path, raw_pts_path)
 
-        # Start encoders
-        self.main_encoder.start()
-        if self.enable_raw:
-            self.raw_encoder.start()
+            # Start encoders
+            self.main_encoder.start()
+            if self.enable_raw:
+                self.raw_encoder.start()
+
+            # Clear metadata
+            self.frame_metadata = []
+
+            # Set flag so thread encodes frames
+            self.record_flag = True
 
 
     def stop_recording(self):
@@ -235,21 +342,28 @@ class RPiInsightCamera:
         finished before calling this method. 
         """
         
-        # Stop encoders
-        self.main_encoder.stop()
-        if self.enable_raw:
-            self.raw_encoder.stop()
+        # Use frame lock so we don't stop encoders until frame is fully processed
+        with self.frame_lock:
+            # Flag camera thread to stop recording
+            self.record_flag = False
 
-        if self.enable_raw:
-            pass
-            #TODO: save metadata - return to anto_rec?
-            # with open(f"{prefix}metadata.txt", 'w') as f:
-            # json.dump(metadata, f)
+            # Stop encoders
+            self.main_encoder.stop()
+            if self.enable_raw:
+                self.raw_encoder.stop()
+
+        # Return metadata to camera_record
+        return self.frame_metadata
 
     def close_camera(self):
         """
         Close the camera, including preview if enabled.
         """
+
+        # Stop camera thread
+        self.close_flag = True
+        self.cam_loop_thread.join()
+
         self.cam.close()
 
     def load_tuning_file(self):
