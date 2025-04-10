@@ -3,3 +3,4 @@
 *.crt
 *.pem
 *.pyc
+env/

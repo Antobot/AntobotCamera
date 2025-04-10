@@ -39,56 +39,62 @@ from av.video.reformatter import Interpolation
 
 import numpy as np
 import math
+import cv2
 
 class CameraStreamTrack(VideoStreamTrack):
     """
     A video track that captures frames from a callback to the pi camera request
     """
-    def __init__(self, read_array_callback):
+    def __init__(self, read_array_callback, frame_dims):
         super().__init__()
         
         self.read_frame = read_array_callback
         
-        self.width = 270
-        self.height = 507
+        self.camera_dims = frame_dims
+        
+        self.stream_dims = self.camera_dims
+        
 
     def set_size(self, width, height):
         # container dims
-        self.hc = height
-        self.wc = width
+        hc = height
+        wc = width
+
+        # camera frame dims
+        hf = self.camera_dims[0]
+        wf = self.camera_dims[1]
+
+        # set stream size to limiting height/width
+        if hf/hc > wf/wc:
+            height = hc
+            width = math.floor(wf/hf * height)
+        else:
+            width = wc
+            height = math.floor(hf/wf * width)
+
+        self.stream_dims = (height, width)
 
     async def recv(self):
         pts, time_base = await self.next_timestamp()
 
-        frame = self.read_frame()  # Capture a frame
+        # Read latest frame from RPiInsightCam
+        frame = self.read_frame()  
 
-        frame = np.rot90(frame)
-
-        hf,wf,_ = frame.shape
-        
-        if hf/self.hc > wf/self.wc:
-            height = self.hc
-            width = math.floor(wf/hf * height)
+        # If frame is none, return green
+        if frame is not None:
+            frame = np.rot90(frame)
+            video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
+            video_frame = video_frame.reformat(self.stream_dims[1], self.stream_dims[0])
         else:
-            width = self.wc
-            height = math.floor(hf/wf * width)
-
-
-
-        # rotate and resize
-        # video_frame = VideoFrame(width=640, height=480)
-        video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
-
-        # video_frame = video_frame.reformat(self.width, self.height)
-        video_frame = video_frame.reformat(width, height)
+            video_frame = VideoFrame(width=self.stream_dims[1], height=self.stream_dims[0])
 
         video_frame.pts = pts
         video_frame.time_base = time_base
         
         return video_frame
 
-    def stop(self):
-        print('stopping camera')
+    # def stop(self):
+    #     print('stopping camera stream track')
         
 
 
@@ -115,6 +121,7 @@ class RPiInsightCamera:
         # Attributes
         self.vid_extension = 'h264'
         self.framerate = framerate
+        self.frame_dims = (2028,1080)
 
         self.frame_lock = threading.Lock() # lock whilst a frame is being processed/encoded 
         self.request_lock = threading.Lock() # lock for reading/writing picamera requests
@@ -149,7 +156,7 @@ class RPiInsightCamera:
 
         if self.enable_raw:
             raw_config = {
-                'size': (2028,1080),
+                'size': self.frame_dims,
                 'format': 'SGBRG12'
             }
         else:
@@ -161,7 +168,7 @@ class RPiInsightCamera:
             # The best way is to specify output_size and bit_depth 
             # (Picamera2 docs, p.23)
             sensor={
-                'output_size': (2028,1080),
+                'output_size': self.frame_dims,
                 'bit_depth': 12
             }, 
             # set frame rate; 50 fps max in this sensor mode
@@ -169,7 +176,7 @@ class RPiInsightCamera:
                 'FrameRate': self.framerate
             },
             main={
-                'size': (2028,1080),
+                'size': self.frame_dims,
                 'format': 'RGB888'
             },
             raw=raw_config,
@@ -203,7 +210,7 @@ class RPiInsightCamera:
             self.raw_encoder.format = config["raw"]["format"]
 
         # Create video track for stream
-        self.stream_track = CameraStreamTrack(self.read_request_array)
+        self.stream_track = CameraStreamTrack(self.read_request_array, self.frame_dims)
 
     def read_request_array(self):
         if self.latest_request is not None:
