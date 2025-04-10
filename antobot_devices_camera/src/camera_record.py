@@ -39,6 +39,7 @@ from datetime import datetime, timedelta
 from datetime import time as t
 
 import rospy
+import rospkg
 import rostopic
 import tf2_ros
 from antobot_camera_msgs.srv import cameraRecord, cameraRecordResponse
@@ -200,9 +201,14 @@ class camRecord:
 
             # update recording directory if the raspberry pi is not master device
             rec_path = request.recordingBasename
-            name_start = rec_path.find('catkin_ws')
-            username = os.getlogin() 
-            self.output_basename = os.path.join('/home', username, rec_path[name_start:])
+            name_start = rec_path.find('AntoManager')
+            username = os.getlogin()
+            pkg_path = rospkg.RosPack().get_path('antobot_manager_msgs')
+            # Go up two directories
+            package_root = os.path.abspath(os.path.join(pkg_path, '..', '..'))
+
+            self.output_basename = os.path.join(package_root, rec_path[name_start:])
+            rospy.loginfo(self.output_basename)
 
             success = self.start_recording()
 
