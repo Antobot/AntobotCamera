@@ -27,6 +27,8 @@
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 import time
 import threading
+import numpy as np
+import math
 
 from picamera2 import Picamera2, Preview
 from picamera2.encoders import H264Encoder, Encoder
@@ -35,28 +37,43 @@ from libcamera import controls
 
 from aiortc import VideoStreamTrack
 from av import VideoFrame
-from av.video.reformatter import Interpolation
 
-import numpy as np
-import math
-import cv2
 
 class CameraStreamTrack(VideoStreamTrack):
     """
-    A video track that captures frames from a callback to the pi camera request
+    A video track that captures frames from a callback to the latest pi camera request
     """
     def __init__(self, read_array_callback, frame_dims):
+        """
+        Initialise a CameraStreamTrack
+
+        Args:
+            read_array_callback (callback): callback to read frame from the camera
+            frame_dims (tuple): dimensions of camera frame (height, width)   
+        """
         super().__init__()
         
+        # Callback to read frame from the camera
         self.read_frame = read_array_callback
         
+        # Dimensions that the camera records at
+        # (height, width) (assuming portrait after a 90 deg rotation)
         self.camera_dims = frame_dims
         
+        # Placeholder for stream dimensions, calculated and updated when stream is requested
+        # (height, width)
         self.stream_dims = self.camera_dims
         
 
     def set_size(self, width, height):
-        # container dims
+        """
+        Calculates and saves the appropriate stream size given the dimensions of the container on the webpage.
+
+        Args:
+            width (int): maximum width in px permitted for the stream 
+            height (int): maximum height in px permitted for the stream       
+        """
+        # container dims on webpage
         hc = height
         wc = width
 
@@ -75,6 +92,15 @@ class CameraStreamTrack(VideoStreamTrack):
         self.stream_dims = (height, width)
 
     async def recv(self):
+        """
+        Returns frame for webRTC stream when called.
+
+        Reads frame from camera using provided callback, rotates and resizes. 
+        Returns green frame if the callback doesn't yield a frame.
+
+        Returns:
+            video_frame (VideoFrame): encoded frame   
+        """
         pts, time_base = await self.next_timestamp()
 
         # Read latest frame from RPiInsightCam
@@ -93,10 +119,14 @@ class CameraStreamTrack(VideoStreamTrack):
         
         return video_frame
 
-    # def stop(self):
-    #     print('stopping camera stream track')
-        
+    def stop(self):
+        # catch stop from receiver and keep alive
+        print('CameraStreamTrack stop caught. Keeping alive.')
 
+    def close(self):
+        print('Stopping CameraStreamTrack.')
+        super().stop()
+        
 
 class RPiInsightCamera:
     def __init__(self, preview=False, raw=False, framerate=30):
@@ -213,6 +243,12 @@ class RPiInsightCamera:
         self.stream_track = CameraStreamTrack(self.read_request_array, self.frame_dims)
 
     def read_request_array(self):
+        """
+        Callback to read the latest frame as an array.
+
+        Returns:
+            out ( array | None ) : numpy array of image or None if no request available
+        """
         if self.latest_request is not None:
             with self.request_lock:
                 return self.latest_request.make_array('main')
@@ -222,9 +258,10 @@ class RPiInsightCamera:
     
     def camera_loop(self):
         """
-        shall run when camera is open
-        when running, save requests for stream
-        when recording, encode requests and store metadata
+        Camera loop drives all camera functions and is to be run in a thread. 
+        
+        One iteration handles one frame. When running, it save requests for stream.
+        When the record flag is set, it encodes requests and stores metadata.
         """
 
         # Run loop until close flag is set
@@ -232,7 +269,7 @@ class RPiInsightCamera:
             
             # Capture request from camera system
             request = self.cam.capture_request(flush=False)
-
+            
             # Update saved request
             with self.request_lock:
                 self.latest_request.release()
@@ -258,30 +295,27 @@ class RPiInsightCamera:
                     # Add this frame's metadata
                     self.frame_metadata.append({k: md[k] for k in md_keys})
 
+
     def is_recording(self):
         """
-        Returns True if the main recording encoder has started and is ready to
-        receive frames to encode and save to a file.
-        
-        NOTE: The method `run_frame_capture` must be called repeatedly to get 
-        the frames and pass them to the encoders (i.e. to actually record data).
+        Returns True if the camera is open, the main recording encoder has started and the record flag is set.
         
         Returns:
-            out (bool): True if the main encoder is running
+            out (bool): True if recording else False
         """
-        return self.is_open() and self.main_encoder.running
+        return self.is_open() and self.main_encoder.running and self.record_flag
     
+
     def is_open(self):
         """
         Returns True if the camera is open. 
-
-        If preview is enabled, it will be shown whilst the camera is open.
-        
+     
         Returns:
             out (bool): True if the camera is running
         """
         return self.cam.started and self.cam_loop_thread.is_alive()
     
+
     def open_camera(self):
         """
         Starts camera and starts preview in a window if requested when
@@ -345,8 +379,10 @@ class RPiInsightCamera:
 
     def stop_recording(self):
         """
-        Stop video recording. The camera loop `run_frame_capture` should have
-        finished before calling this method. 
+        Stop video recording and return camera frame metadata.
+
+        Returns:
+            metadata (list): list where each item is a dictionary of metadata for one frame
         """
         
         # Use frame lock so we don't stop encoders until frame is fully processed
@@ -364,8 +400,11 @@ class RPiInsightCamera:
 
     def close_camera(self):
         """
-        Close the camera, including preview if enabled.
+        Close the camera.
         """
+
+        # End the stream track
+        self.stream_track.close()
 
         # Stop camera thread
         self.close_flag = True
