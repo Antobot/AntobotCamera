@@ -44,17 +44,7 @@ import tf2_ros
 from antobot_camera_msgs.srv import cameraRecord, cameraRecordResponse
 from sensor_msgs.msg import NavSatFix   
 
-
-def get_hostname():
-
-    try:
-        with open('/etc/hostname', 'r') as f:
-            hostname = f.read().strip()
-            return hostname
-        
-    except Exception as e:
-        print(f'Cannot read hostname:{e}')
-        return None  
+from antobot_devices_camera.rpi_insight_camera import RPiInsightCamera
 
 
 def is_master_running():
@@ -83,28 +73,21 @@ class camRecord:
 
         """
 
-        self.hostname = get_hostname()
         self.save_path = os.path.join(os.path.dirname(os.getcwd()), 'saved_recordings')
 
-
         # Create and setup camera
-        cam_position = 'left' #self.hostname.split('-')[1]
-        if self.hostname.startswith('carrierboard'):
-            from antobot_devices_camera.zed_cam import ZedCamera
-            self.cam = ZedCamera()
-            self.cam_name = f'zed_{cam_position}'
-            self.srv_name = f'/antobot_devices_camera/zed/recording/{cam_position}'
-            
-        elif self.hostname.startswith('insight-pi'):
-            from antobot_devices_camera.rpi_insight_camera import RPiInsightCamera
-            self.cam = RPiInsightCamera(preview=False, raw=False, framerate=50)
-            self.cam_name = f'RP_{cam_position}'
-            self.srv_name = f'/antobot_devices_camera/RP/recording/{cam_position}'
+        cam_position = 'left' 
+        self.cam = RPiInsightCamera(preview=False, raw=False, framerate=50)
+        self.cam_name = f'RP_{cam_position}'
+        self.srv_name = f'/antobot_devices_camera/RP/recording/{cam_position}'
 
+        # Create and set up stream
         self.enable_stream = True
         if self.enable_stream:
             from preview_streamer import PreviewStreamer
             self.streamer = PreviewStreamer(self.cam.stream_track)
+        else:
+            self.streamer = None
        
         self.output_basename = None
 
@@ -117,9 +100,6 @@ class camRecord:
         self.srvcameraRecord = rospy.Service(self.srv_name, cameraRecord, self._serviceCallbackcameraRecord)
         self.json_dict = self.init_metadata()
         
-
-        # self.manage_disk_space()
-
         self.master_check_thread = threading.Thread(target=is_master_running)
         self.master_check_thread.start()
 
@@ -132,22 +112,7 @@ class camRecord:
 
         # rospy.spin()
 
-    def cam_rec_loop(self):
-        """
-        Loop that drives the recording. On each iteration, it triggers a frame to be processed by the camera and the GPS to be logged. 
-        """
-        while not self.stop_signal:
-            if self.cam.run_frame_capture():
-
-                if self.display_image:
-                    self.cam.show_image(self.cam_name)
-
-                if self.use_gps:
-                    self.retrieve_gps()
-
-                if hasattr(self.cam, 'adjust_exposure'):
-                    self.cam.adjust_exposure(self.output_basename)
-
+    
     def manage_disk_space(self):
         # check disk usage
         disk_free_space = psutil.disk_usage('/').free / (1024 ** 3)
@@ -376,13 +341,9 @@ class camRecord:
             return False
 
 
-
     def is_cam_recording(self):
         """
         Returns True if the camera is recording, otherwise False.
-
-        We need to check the camera (`self.cam`) has started the recording and 
-        that the camera loop thread is driving the recording from `cameraRecord`.
 
         Returns:
             out (bool): True if camera is recording
@@ -452,10 +413,17 @@ class camRecord:
 
 
 if __name__ == "__main__":
-    # try:
-    rospy.loginfo(f"SW4100: cameraRecord Node launched")
-    avRec = camRecord()
-    # except Exception as e:
-    #     print(e)
-    #     rospy.loginfo(f"SW4101: cameraRecord Node died: {e}")
-    avRec.streamer.run()
+    try:
+        rospy.loginfo(f"SW4100: cameraRecord Node launched")
+        avRec = camRecord()
+   
+        if avRec.enable_stream:
+            # if streaming, use aiohttp event loop
+            avRec.streamer.run()
+        else:
+            # else, keep alive with rospy.spin
+            rospy.spin()
+    
+    except Exception as e:
+        print(e)
+        rospy.loginfo(f"SW4101: cameraRecord Node died: {e}")
