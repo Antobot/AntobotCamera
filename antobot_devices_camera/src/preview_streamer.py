@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2024, ANTOBOT LTD.
+# Copyright (c) 2025, ANTOBOT LTD.
 # All rights reserved.
 
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
@@ -17,8 +17,8 @@
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-# # # Code Description: 
-# # # Interfaces:       
+# # # Code Description: Provides a class to handle streaming a preivew of the Pi camera
+# # # Interfaces:       Imported by camera_record.py
 
 # Contacts: Authors:    james.bennett@antobot.ai
 #           Owner:      james.bennett@antobot.ai
@@ -26,91 +26,63 @@
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-import argparse
 import asyncio
 import json
-import logging
-import os
-import ssl
 import uuid
-import threading
 
-import cv2
 from aiohttp import web
-from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
-from aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder, MediaRelay
-from av import VideoFrame
-from picamera2 import Picamera2
+from aiortc import RTCPeerConnection, RTCSessionDescription
 import aiohttp_cors
 
 
 class PreviewStreamer:
+    """
+    Provides a web server that will setup and run the preview stream.
+    Provides an `/offer` route on port 8080.
+    """
     def __init__(self, track_reference):
-        self.logger = logging.getLogger("pc")
+        """
+        Initialise the PreviewStreamer class.
+
+        Args:
+            track_reference (CameraStreamTrack): must be a reference to an object that inherits from aiortc MediaStreamTrack
+            
+        """
         self.pcs = set()
         
+        # Reference to CameraStreamTrack provided by camera
         self.track_reference = track_reference
-
-        # thread = threading.Thread(target=self.run)
-        # thread.start()
 
 
     async def offer(self, request):
-        print("in offer function")
         params = await request.json()
         offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
-
-        print("offer request received")
 
         pc = RTCPeerConnection()
         pc_id = "PeerConnection(%s)" % uuid.uuid4()
         self.pcs.add(pc)
 
-        def log_info(msg, *args):
-            self.logger.info(pc_id + " " + msg, *args)
+        def log_info(msg):
+            print(pc_id + " " + msg)
 
-        log_info("Created for %s", request.remote)
-
-        
-        @pc.on("datachannel")
-        def on_datachannel(channel):
-            @channel.on("message")
-            def on_message(message):
-                if isinstance(message, str) and message.startswith("ping"):
-                    channel.send("pong" + message[4:])
+        log_info(f"Created connection for {request.remote}")
 
         @pc.on("connectionstatechange")
         async def on_connectionstatechange():
             log_info("Connection state is %s", pc.connectionState)
             if pc.connectionState == "failed":
-                print('connection state change failed')
                 await pc.close()
                 self.pcs.discard(pc)
 
-        @pc.on("track")
-        def on_track(track):
-            log_info("Track %s received", track.kind)
-            print('TRACK CALLBACK')
+        # Setup and add track to connection         
+        if self.track_reference is not None:
+            self.track_reference.set_size(params["width"], params["height"])
+            pc.addTrack(self.track_reference)
+        else:
+            log_info("Tried to add track but track is None")
             
-            # pc.addTrack(VideoStreamTrack())
-            if self.track_reference is not None:
-                self.track_reference.set_size(params["width"], params["height"])
-
-                pc.addTrack(self.track_reference)
-            else:
-                print("Track is None")
-            
-            
-            
-            @track.on("ended")
-            async def on_ended():
-                log_info("Track %s ended", track.kind)
-                print("ENDED")
-                
-
         # handle offer
         await pc.setRemoteDescription(offer)
-        # await recorder.start()
 
         # send answer
         answer = await pc.createAnswer()
@@ -135,33 +107,28 @@ class PreviewStreamer:
 
 
     def run(self):
-        print('in run')
-        
-        verbose = False
-        if verbose:
-            logging.basicConfig(level=logging.DEBUG)
-        else:
-            logging.basicConfig(level=logging.INFO)
-
+        """
+        Run the server to provide the /offer resource and handle requests.
+        """
+               
         app = web.Application()
-                    
-        cors = aiohttp_cors.setup(app)
+        app.on_shutdown.append(self.on_shutdown)
 
-        resource = cors.add(app.router.add_resource("/offer"))
-        route = cors.add(
-        resource.add_route("POST", self.offer), {
-            "http://localhost:5173": aiohttp_cors.ResourceOptions(
-                allow_credentials=True,
-                expose_headers=("X-Custom-Server-Header",),
-                allow_headers=("X-Requested-With", "Content-Type"),
-                max_age=3600,
-            )
+        # use "*" to allow all (we don't know their ip address)
+        cors = aiohttp_cors.setup(app, defaults={
+            "*": aiohttp_cors.ResourceOptions(
+                    allow_credentials=True,
+                    expose_headers="*",
+                    allow_headers="*",
+                )
         })
+        resource = cors.add(app.router.add_resource("/offer"))
+        cors.add(resource.add_route("POST", self.offer))
 
         host = '0.0.0.0'
         port = 8080
 
-        app.on_shutdown.append(self.on_shutdown)
+        # app event loop
         web.run_app(
             app, access_log=None, host=host, port=port,
         )
