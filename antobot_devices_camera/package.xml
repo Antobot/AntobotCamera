@@ -2,8 +2,8 @@
 <package format="2">
   <name>antobot_devices_camera</name>
   <version>0.0.0</version>
-  <description>The antobot_manager_devices package</description>
-  <maintainer email="zhuang.zhou@antobot.ai">Zhuang Zhou</maintainer>
+  <description>The antobot_devices_camera package</description>
+  <maintainer email="jinhuan.liu@antobot.ai">Jinhuan Liu</maintainer>
 
   <license>BSD</license>
 
@@ -14,7 +14,5 @@
   <depend>tf</depend>
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
-  <depend>geonav_transform</depend>
-  <depend>antobot_manager_software</depend>
   <depend>std_msgs</depend>
 </package>
