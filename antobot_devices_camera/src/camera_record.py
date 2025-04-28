@@ -202,7 +202,7 @@ class camRecord:
             # update recording directory if the raspberry pi is not master device
             rec_path = request.recordingBasename
             name_start = rec_path.find('AntoManager')
-            pkg_path = rospkg.RosPack().get_path('antobot_manager_msgs')
+            pkg_path = rospkg.RosPack().get_path('antobot_devices_camera')
             # Go up two directories
             package_root = os.path.abspath(os.path.join(pkg_path, '..', '..'))
 
