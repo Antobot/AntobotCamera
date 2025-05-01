@@ -104,9 +104,10 @@ class camRecord:
         self.master_check_thread = threading.Thread(target=is_master_running)
         self.master_check_thread.start()
 
-        self.use_gps = False
+        self.use_gps = True
+        self.rec_gps = True
         if self.use_gps:
-            self.robot_gps_sub = rospy.Subscriber("/am_gps_urcu", NavSatFix, self.gps_callback)
+            self.robot_gps_sub = rospy.Subscriber("/antobot_f9p_usb", NavSatFix, self.gps_callback)
         self.gps = []
 
         signal(SIGINT, self.signal_handler)  # Allow interrupt from keyboard (CTRL + C).
@@ -307,8 +308,8 @@ class camRecord:
         self.json_dict = self.init_metadata()
 
         if self.use_gps:
-            self.json_dict['origin']['latitude'] = rospy.get_param('/GPS_origin/latitude')
-            self.json_dict['origin']['longitude'] = rospy.get_param('/GPS_origin/longitude')
+            self.json_dict['origin']['latitude'] = rospy.get_param('/GPS_origin/latitude',0)
+            self.json_dict['origin']['longitude'] = rospy.get_param('/GPS_origin/longitude',0)
             self.json_dict['gps'] = []
 
         # Setup and start encoders
