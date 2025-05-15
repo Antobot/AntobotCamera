@@ -144,7 +144,7 @@ class cameraManager:
                 return_msg.responseCode = response.responseCode
                 return_msg.responseString = response.responseString
 
-                if cam.camType == 'zed':  # only check the zed status for now
+                if True:  # only check the zed status for now
                     if cam.isRecording:
                         self.pub_scout_light.publish(True)  # only turn on scouting light when camera starts recording
                         rospy.loginfo(
