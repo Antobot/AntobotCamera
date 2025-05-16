@@ -78,7 +78,7 @@ class camRecord:
 
         # Create and setup camera
         cam_position = 'left' 
-        self.cam = RPiInsightCamera(preview=False, raw=False, framerate=50)
+        self.cam = RPiInsightCamera(preview=False, raw=False, framerate=30)
         self.cam_name = f'RP_{cam_position}'
         self.srv_name = f'/antobot_devices_camera/RP/recording/{cam_position}'
 
@@ -370,7 +370,7 @@ class camRecord:
 
     def gps_callback(self, msg):
         
-        if self.rec_gps:
+        if self.use_gps:
             # Put data from message into dictionary
             entry = {
                 'time': msg.header.stamp.to_nsec(),
