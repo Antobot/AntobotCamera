@@ -88,6 +88,9 @@ class CameraStreamTrack(VideoStreamTrack):
         else:
             width = wc
             height = math.floor(hf/wf * width)
+        
+        width = width - width%2
+        height = height - height%2
 
         self.stream_dims = (height, width)
 
@@ -264,8 +267,16 @@ class RPiInsightCamera:
         When the record flag is set, it encodes requests and stores metadata.
         """
 
+        # expected_interval = 1.0 / self.framerate
+        # print(f"[CameraLoop] Target frame interval: {expected_interval:.3f} sec")
+
+        # frame_count = 0
+        # total_encode_time = 0
+        # last_fps_time = time.time()
+
         # Run loop until close flag is set
         while not self.close_flag:
+            # loop_start = time.time()
             
             # Capture request from camera system
             request = self.cam.capture_request(flush=False)
@@ -279,6 +290,8 @@ class RPiInsightCamera:
             # Note, whilst each pi camera function (e.g. encode) is thread safe, we don't want a mismatch of metadata and video frames
             with self.frame_lock:
                 if self.record_flag:
+                    # encode_start = time.time()
+
                     # Get camera metadata
                     md = request.get_metadata()
                     md_keys = ("SensorTimestamp",)
@@ -286,6 +299,11 @@ class RPiInsightCamera:
                             
                     # Encode frame from the request
                     self.main_encoder.encode("main", request)
+                    
+                    # encode_end = time.time()
+                    # encode_time = encode_end - encode_start
+                    # total_encode_time += encode_time
+                    # print(f"[ENCODE] Frame {frame_count} took {encode_time*1000:.2f} ms")
                     
                     # If raw is enabled, encode frame and use all metadata keys
                     if self.enable_raw:
@@ -295,6 +313,19 @@ class RPiInsightCamera:
                     # Add this frame's metadata
                     self.frame_metadata.append({k: md[k] for k in md_keys})
 
+
+            # loop_end = time.time()
+            # loop_time = loop_end - loop_start
+
+            # if loop_time > expected_interval:
+            #     print(f"[⚠] Slow loop: {loop_time:.3f}s (expected {expected_interval:.3f}s)")
+
+            # frame_count += 1
+            # if frame_count % 50 == 0:
+            #     elapsed = loop_end - last_fps_time
+            #     print(f"[FPS] ~{50 / elapsed:.2f} fps | Avg encode: {total_encode_time/50*1000:.2f} ms")
+            #     total_encode_time = 0
+            #     last_fps_time = time.time()
 
     def is_recording(self):
         """
@@ -325,8 +356,8 @@ class RPiInsightCamera:
         #Init camera here, rather than with class
         self.init_camera()
 
-        if self.enable_preview:
-            self.cam.start_preview(Preview.QTGL)
+        # if self.enable_preview:
+        #     self.cam.start_preview(Preview.QTGL)
 
         self.cam.start()
         

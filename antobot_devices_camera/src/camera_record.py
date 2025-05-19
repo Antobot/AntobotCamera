@@ -78,7 +78,7 @@ class camRecord:
 
         # Create and setup camera
         cam_position = 'left' 
-        self.cam = RPiInsightCamera(preview=False, raw=False, framerate=30)
+        self.cam = RPiInsightCamera(preview=True, raw=False, framerate=30)
         self.cam_name = f'RP_{cam_position}'
         self.srv_name = f'/antobot_devices_camera/RP/recording/{cam_position}'
 
