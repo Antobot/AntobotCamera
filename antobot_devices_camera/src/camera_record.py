@@ -77,7 +77,6 @@ class camRecord:
         self.save_path = os.path.join(os.path.dirname(os.getcwd()), 'saved_recordings')
 
         # Create and setup camera
-
         rospack = rospkg.RosPack()
         try:
             path = rospack.get_path('antobot_description')
@@ -111,11 +110,6 @@ class camRecord:
 
         except Exception as e:
             print(f"Failed to read robot config file, error: {e}")
-
-
-        # cam_position = 'left' 
-        
-        
 
         # Create and set up stream
         self.enable_stream = True
@@ -238,8 +232,7 @@ class camRecord:
             # update recording directory if the raspberry pi is not master device
             rec_path = request.recordingBasename
             name_start = rec_path.find('AntoManager')
-            # username = os.getlogin()
-            pkg_path = rospkg.RosPack().get_path('antobot_manager_msgs')
+            pkg_path = rospkg.RosPack().get_path('antobot_devices_camera')
             # Go up two directories
             package_root = os.path.abspath(os.path.join(pkg_path, '..', '..'))
 
@@ -430,7 +423,7 @@ class camRecord:
 
     def gps_callback(self, msg):
         
-        if self.rec_gps:
+        if self.use_gps:
             # Put data from message into dictionary
             entry = {
                 'time': msg.header.stamp.to_nsec(),

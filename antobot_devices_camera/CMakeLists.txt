@@ -6,7 +6,6 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   geometry_msgs 
   tf
-  geonav_transform
   tf2
   tf2_ros
   std_msgs
@@ -14,7 +13,7 @@ find_package(catkin REQUIRED COMPONENTS
 
 
 catkin_package(
-   CATKIN_DEPENDS roscpp sensor_msgs geometry_msgs tf geonav_transform tf2 tf2_ros std_msgs
+   CATKIN_DEPENDS roscpp sensor_msgs geometry_msgs tf tf2 tf2_ros std_msgs
 )
 
 catkin_install_python(PROGRAMS
