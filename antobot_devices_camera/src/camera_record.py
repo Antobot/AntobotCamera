@@ -77,16 +77,51 @@ class camRecord:
         self.save_path = os.path.join(os.path.dirname(os.getcwd()), 'saved_recordings')
 
         # Create and setup camera
-        cam_position = 'left' 
-        self.cam = RPiInsightCamera(preview=False, raw=False, framerate=50)
-        self.cam_name = f'RP_{cam_position}'
-        self.srv_name = f'/antobot_devices_camera/RP/recording/{cam_position}'
+
+        rospack = rospkg.RosPack()
+        try:
+            path = rospack.get_path('antobot_description')
+            with open(path + '/config/platform_config.yaml', 'r') as file:
+                params = yaml.safe_load(file)
+
+            if "camera" in params:
+                for cam_type in params["camera"]:
+                    mode = params["camera"][cam_type]["mode"]
+                    cam_position = params["camera"][cam_type]["location"]
+
+                    self.cam_name = f'RP_{cam_position}'
+                    self.srv_name = f"/antobot_devices_camera/{cam_type}/{mode}/{cam_position}"
+                    
+                    if "dual" in params["camera"][cam_type].keys() and params["camera"][cam_type]["dual"] is True:
+                        # make 2 cameras
+                        self.cams = [
+                            RPiInsightCamera(preview=False, raw=False, framerate=30, cam_num=0),
+                            RPiInsightCamera(preview=False, raw=False, framerate=30, cam_num=1)
+                        ]
+
+                    else:
+                        #make one camera
+                        self.cams = [
+                            RPiInsightCamera(preview=False, raw=False, framerate=30, cam_num=0)
+                            , 
+                        ]
+
+                    # only supporting one camera
+                    break
+
+        except Exception as e:
+            print(f"Failed to read robot config file, error: {e}")
+
+
+        # cam_position = 'left' 
+        
+        
 
         # Create and set up stream
         self.enable_stream = True
         if self.enable_stream:
             from preview_streamer import PreviewStreamer
-            self.streamer = PreviewStreamer(self.cam.stream_track)
+            self.streamer = PreviewStreamer(self.cams[0].stream_track)
         else:
             self.streamer = None
        
@@ -203,7 +238,7 @@ class camRecord:
             # update recording directory if the raspberry pi is not master device
             rec_path = request.recordingBasename
             name_start = rec_path.find('AntoManager')
-            username = os.getlogin()
+            # username = os.getlogin()
             pkg_path = rospkg.RosPack().get_path('antobot_manager_msgs')
             # Go up two directories
             package_root = os.path.abspath(os.path.join(pkg_path, '..', '..'))
@@ -249,17 +284,23 @@ class camRecord:
         """
 
         # If the camera is already opened, return straight away
-        if self.cam.is_open():
+        for cam in self.cams:
+            if not cam.is_open():
+                break
+        else:
             return True
 
         # Try to open camera
-        self.cam.open_camera()
+        for cam in self.cams:
+            cam.open_camera()
 
         # Check the camera opened, if not return False
-        if self.cam.is_open():
-            return True
+        for cam in self.cams:
+            if not cam.is_open():
+                return False
         else:
-            return False
+            return True
+            
         
 
     def close_camera(self):
@@ -270,21 +311,26 @@ class camRecord:
             success (bool) : True if camera is closed, False if it didn't close
         """
 
-
-        if not self.cam.is_open():
+        for cam in self.cams:
+            if cam.is_open():
+                break
+        else:
             return True
         
          # If recording hasn't been stopped, stop it first
         if self.is_cam_recording(): 
             self.stop_recording()
 
-        if self.cam.is_open():
-            self.cam.close_camera()
+        
+        for cam in self.cams:
+            if cam.is_open():
+                cam.close_camera()
 
-        if not self.cam.is_open():
-            return True
+        for cam in self.cams:
+            if cam.is_open():
+                return False
         else:
-            return False
+            return True
 
     def start_recording(self):
         """
@@ -295,10 +341,10 @@ class camRecord:
         """
         
         # check if camera is opened, if not, open camera first
-        if not self.cam.is_open():
-            success = self.open_camera()
-            if not success:
-                return False
+        for cam in self.cams:
+            if not cam.is_open():
+                if not self.open_camera():
+                    return False
 
         # if the camera is already recording, return straight away
         if self.is_cam_recording():
@@ -313,7 +359,9 @@ class camRecord:
             self.json_dict['gps'] = []
 
         # Setup and start encoders
-        self.cam.start_recording(self.output_basename)
+        
+        for cam in self.cams:
+            cam.start_recording(self.output_basename)
 
         # Check recording has started
         if self.is_cam_recording():
@@ -337,8 +385,14 @@ class camRecord:
         # if recording hasn't been stopped, stop it
         if self.is_cam_recording():
             
+            metadata_list = []
+
             # Stop recording and store camera per frame metadata
-            self.json_dict['cam_metadata'] = self.cam.stop_recording()          
+            for cam in self.cams:
+                md = cam.stop_recording()
+                metadata_list.append(md)
+            
+            self.json_dict['cam_metadata'] = metadata_list
             self.write_metadata()
 
         # Check recording has stopped
@@ -355,7 +409,11 @@ class camRecord:
         Returns:
             out (bool): True if camera is recording
         """
-        return self.cam.is_recording()
+        for cam in self.cams:
+            if not cam.is_recording():
+                return False
+        
+        return True
 
 
     def signal_handler(self, signal_received, frame):
