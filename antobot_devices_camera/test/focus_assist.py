@@ -8,7 +8,7 @@ def main():
     args = parser.parse_args()
 
     cam = Picamera2(camera_num=args.camera)
-    
+    #cam = Picamera2(1)
     config = cam.create_video_configuration(
             # Put camera sensor into mode 1 (i.e cam.sensor_modes[1]).
             # The best way is to specify output_size and bit_depth 
@@ -35,6 +35,7 @@ def main():
 
     print(f"Focus assist tool. Adjust lens on camera {args.camera}.")
     print("Higher FocusFoM is better.")
+    print(f"FocusFoM: 000000", end='\r')
 
     while True:
         md = cam.capture_metadata()
