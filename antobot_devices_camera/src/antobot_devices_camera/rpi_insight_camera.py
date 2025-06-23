@@ -154,7 +154,7 @@ class RPiInsightCamera:
         # Attributes
         self.vid_extension = 'h264'
         self.framerate = framerate
-        self.frame_dims = (2028,1080)
+        self.frame_dims = (1456,1088)
 
         self.frame_lock = threading.Lock() # lock whilst a frame is being processed/encoded 
         self.request_lock = threading.Lock() # lock for reading/writing picamera requests
@@ -181,7 +181,7 @@ class RPiInsightCamera:
 
         # Create raw and preview configurations if they have been requested
         if self.enable_preview:
-            lores_config = {'size': (1014,540)}
+            lores_config = {'size': (728,544)}
             display_config = "lores"
         else:
             lores_config = None
@@ -190,7 +190,7 @@ class RPiInsightCamera:
         if self.enable_raw:
             raw_config = {
                 'size': self.frame_dims,
-                'format': 'SGBRG12'
+                'format': 'SGBRG10'
             }
         else:
             raw_config = None
@@ -202,7 +202,7 @@ class RPiInsightCamera:
             # (Picamera2 docs, p.23)
             sensor={
                 'output_size': self.frame_dims,
-                'bit_depth': 12
+                'bit_depth': 10
             }, 
             # set frame rate; 50 fps max in this sensor mode
             controls={
@@ -210,7 +210,7 @@ class RPiInsightCamera:
             },
             main={
                 'size': self.frame_dims,
-                'format': 'RGB888'
+                'format': 'RGB888'  # change to YUV420 if this doesn't work
             },
             raw=raw_config,
             lores=lores_config,
@@ -460,7 +460,7 @@ class RPiInsightCamera:
         #  > holds gain at 0th value, ramps to 1st shutter value 
         #  > holds shutter at 1st value, ramps to 1st gain value
         #  > alternate ramping to shutter and gain values, maxing out at final values in list
-        tuning = Picamera2.load_tuning_file("imx477.json")
+        tuning = Picamera2.load_tuning_file("imx296.json")
         algo = Picamera2.find_tuning_algo(tuning, "rpi.agc")
         algo["channels"][0]["exposure_modes"]["custom"] = {
             "shutter": [100, 1000, 2000, 5000, 10000], 
