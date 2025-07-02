@@ -291,34 +291,26 @@ class camRecord:
 
         return return_msg
 
+
     def open_camera(self):
         """
-        Opens the camera and displays preview if initialised.
+        Opens all cameras and displays preview if initialised.
 
         Returns:
             success (bool) : True if camera is open, False if it didn't open
 
         """
-
-        # If the camera is already opened, return straight away
+        # For each camera, if not already opened, try to open.
         for cam in self.cams:
             if not cam.is_open():
-                break
-        else:
-            return True
+                cam.open_camera()
 
-        # Try to open camera
-        for cam in self.cams:
-            cam.open_camera()
-
-        # Check the camera opened, if not return False
-        for cam in self.cams:
-            if not cam.is_open():
-                return False
-        else:
+        # Check all cameras are opened, if not return False
+        if self.is_every_cam_open():
             return True
-            
-        
+        else:
+            return False
+                
 
     def close_camera(self):
         """
@@ -327,27 +319,20 @@ class camRecord:
         Returns:
             success (bool) : True if camera is closed, False if it didn't close
         """
-
+        # For each camera, stop recording and close camera.
         for cam in self.cams:
-            if cam.is_open():
-                break
-        else:
-            return True
-        
-         # If recording hasn't been stopped, stop it first
-        if self.is_cam_recording(): 
-            self.stop_recording()
+            if cam.is_recording():
+                cam.stop_recording()
 
-        
-        for cam in self.cams:
             if cam.is_open():
                 cam.close_camera()
 
-        for cam in self.cams:
-            if cam.is_open():
-                return False
+        # Check no cameras are open, if so return False        
+        if self.is_any_cam_open():
+            return False
         else:
             return True
+
 
     def start_recording(self):
         """
@@ -357,15 +342,15 @@ class camRecord:
             success (bool): True if recording is started, False if recording failed to start
         """
         
-        # check if camera is opened, if not, open camera first
-        for cam in self.cams:
-            if not cam.is_open():
-                if not self.open_camera():
-                    return False
-
-        # if the camera is already recording, return straight away
-        if self.is_cam_recording():
+        # if the cameras are already recording, return straight away
+        if self.is_every_cam_recording():
             return True
+        
+        # check if cameras are opened, if not, open cameras first
+        if not self.is_every_cam_open():
+            if not self.open_camera():
+                # if cameras fail to open, return False
+                return False
 
         # clear dict
         self.json_dict = self.init_metadata()
@@ -376,12 +361,11 @@ class camRecord:
             self.json_dict['gps'] = []
 
         # Setup and start encoders
-        
         for cam in self.cams:
             cam.start_recording(self.output_basename)
 
         # Check recording has started
-        if self.is_cam_recording():
+        if self.is_every_cam_recording():
             return True
         else:
             return False
@@ -396,41 +380,87 @@ class camRecord:
         """
         
         # if the camera is already stopped, return straight away
-        if not self.is_cam_recording():
+        if not self.is_any_cam_recording():
             return True
         
-        # if recording hasn't been stopped, stop it
-        if self.is_cam_recording():
-            
-            metadata_list = []
-
-            # Stop recording and store camera per frame metadata
-            for cam in self.cams:
-                md = cam.stop_recording()
-                metadata_list.append(md)
-            
-            self.json_dict['cam_metadata'] = metadata_list
-            self.write_metadata()
+        # Stop recording and store camera per frame metadata
+        metadata_list = []
+        for cam in self.cams:
+            md = cam.stop_recording()
+            metadata_list.append(md)
+        
+        self.json_dict['cam_metadata'] = metadata_list
+        self.write_metadata()
 
         # Check recording has stopped
-        if not self.is_cam_recording():
+        if not self.is_any_cam_recording():
             return True
         else:
             return False
 
 
-    def is_cam_recording(self):
+    def is_every_cam_recording(self):
         """
-        Returns True if the camera is recording, otherwise False.
+        Returns True if every camera is recording, otherwise False.
 
         Returns:
-            out (bool): True if camera is recording
+            out (bool): True if every camera is recording. False if one or more isn't.
         """
         for cam in self.cams:
             if not cam.is_recording():
+                # if any cam ISN'T recording, return false
                 return False
         
+        # if we get to here, all cameras are recording
         return True
+    
+
+    def is_any_cam_recording(self):
+        """
+        Returns True if any of the cameras is recording, otherwise False.
+
+        Returns:
+            out (bool): True if one or more camera is recording. False if none are recording.
+        """
+        for cam in self.cams:
+            if cam.is_recording():
+                # if any of the cameras is recording, return True
+                return True
+        
+        # if we get to here, no camera is recording
+        return False
+    
+
+    def is_every_cam_open(self):
+        """
+        Returns True if every camera is open, otherwise False.
+
+        Returns:
+            out (bool): True if every camera is open. False if one or more isn't.
+        """
+        for cam in self.cams:
+            if not cam.is_open():
+                # if any cam ISN'T open, return false
+                return False
+        
+        # if we get to here, all cameras are open
+        return True
+    
+
+    def is_any_cam_open(self):
+        """
+        Returns True if any of the cameras is open, otherwise False.
+
+        Returns:
+            out (bool): True if one or more camera is open. False if none are open.
+        """
+        for cam in self.cams:
+            if cam.is_open():
+                # if any of the cameras is open, return True
+                return True
+        
+        # if we get to here, no camera is open
+        return False
 
 
     def signal_handler(self, signal_received, frame):
@@ -445,6 +475,7 @@ class camRecord:
         self.close_camera()
         exit(0)
 
+
     def gps_callback(self, msg):
         
         if self.use_gps:
@@ -458,6 +489,7 @@ class camRecord:
 
             # Write to metadata dict
             self.json_dict['gps'].append(entry)
+
 
     def write_metadata(self):
         """
