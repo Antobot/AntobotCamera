@@ -76,13 +76,19 @@ class camRecord:
 
         self.save_path = os.path.join(os.path.dirname(os.getcwd()), 'saved_recordings')
 
-        # Create and setup camera
+        # Read config
         rospack = rospkg.RosPack()
         try:
             path = rospack.get_path('antobot_description')
             with open(path + '/config/platform_config.yaml', 'r') as file:
                 params = yaml.safe_load(file)
 
+        except Exception as e:
+            print(f"Failed to read robot config file, error: {e}")
+            raise
+
+        # Create and setup camera
+        try:
             if "camera" in params:
                 for cam_type in params["camera"]:
                     mode = params["camera"][cam_type]["mode"]
@@ -107,9 +113,33 @@ class camRecord:
 
                     # only supporting one camera
                     break
-
+        except KeyError as e:
+            print(f"KeyError in camera setup. Is platform_config.yaml properly defined? Error: {e}")
+            raise
         except Exception as e:
-            print(f"Failed to read robot config file, error: {e}")
+            print(f"Failed to setup camera(s). Error: {e}")
+            raise
+
+        # Setup GPS logging 
+        try:
+            if "gps" in params:
+                self.use_gps = True
+            
+                if "urcu" in params["gps"]:
+                    self.robot_gps_sub = rospy.Subscriber("/am_gps_urcu", NavSatFix, self.gps_callback)
+                elif "scouting_box" in params["gps"]:
+                    self.robot_gps_sub = rospy.Subscriber("/antobot_f9p_usb", NavSatFix, self.gps_callback)
+                else:
+                    # There is a gps key but no key for the platform type. 
+                    raise ValueError("platform_config.yaml has a GPS key but there is no key for the platform type.")
+        except KeyError as e:
+            print(f"KeyError in GPS logging setup. Is platform_config.yaml properly defined? Error: {e}")
+            raise
+        except Exception as e:
+            print(f"Failed to setup GPS logging. Error: {e}")
+            raise
+        finally:
+            self.gps = []
 
         # Create and set up stream
         self.enable_stream = True
@@ -132,12 +162,6 @@ class camRecord:
         
         self.master_check_thread = threading.Thread(target=is_master_running)
         self.master_check_thread.start()
-
-        self.use_gps = True
-        self.rec_gps = True
-        if self.use_gps:
-            self.robot_gps_sub = rospy.Subscriber("/antobot_f9p_usb", NavSatFix, self.gps_callback)
-        self.gps = []
 
         signal(SIGINT, self.signal_handler)  # Allow interrupt from keyboard (CTRL + C).
 
