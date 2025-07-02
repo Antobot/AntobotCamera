@@ -387,7 +387,7 @@ class RPiInsightCamera:
         # Use frame lock so we don't reconfigure encoders whilst they are being written
         with self.frame_lock:
             # Append extension to file path and assign encoder output
-            full_path_main = f"{filepath}.{self.cam_num}.h264"
+            full_path_main = f"{filepath}_{self.cam_num}.h264"
             self.main_encoder.output = FileOutput(full_path_main)
             
             # Assign raw stream outputs
