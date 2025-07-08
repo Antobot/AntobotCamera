@@ -111,7 +111,7 @@ class CameraStreamTrack(VideoStreamTrack):
 
         # If frame is none, return green
         if frame is not None:
-            frame = np.rot90(frame)
+            frame = np.rot90(frame,-1)
             video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
             video_frame = video_frame.reformat(self.stream_dims[1], self.stream_dims[0])
         else:
@@ -132,7 +132,7 @@ class CameraStreamTrack(VideoStreamTrack):
         
 
 class RPiInsightCamera:
-    def __init__(self, preview=False, raw=False, framerate=30):
+    def __init__(self, preview=False, raw=False, framerate=30, cam_num=0):
         """
         Initialise Raspberry Pi camera configured for robot scouting.
 
@@ -155,6 +155,7 @@ class RPiInsightCamera:
         self.vid_extension = 'h264'
         self.framerate = framerate
         self.frame_dims = (2028,1080)
+        self.cam_num = cam_num
 
         self.frame_lock = threading.Lock() # lock whilst a frame is being processed/encoded 
         self.request_lock = threading.Lock() # lock for reading/writing picamera requests
@@ -177,7 +178,7 @@ class RPiInsightCamera:
 
         # Create camera object with custom tuning file
         tuning_file = self.load_tuning_file()
-        self.cam = Picamera2(tuning=tuning_file)
+        self.cam = Picamera2(camera_num=self.cam_num, tuning=tuning_file)
 
         # Create raw and preview configurations if they have been requested
         if self.enable_preview:
@@ -386,7 +387,7 @@ class RPiInsightCamera:
         # Use frame lock so we don't reconfigure encoders whilst they are being written
         with self.frame_lock:
             # Append extension to file path and assign encoder output
-            full_path_main = f"{filepath}.h264"
+            full_path_main = f"{filepath}_{self.cam_num}.h264"
             self.main_encoder.output = FileOutput(full_path_main)
             
             # Assign raw stream outputs

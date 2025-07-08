@@ -76,17 +76,76 @@ class camRecord:
 
         self.save_path = os.path.join(os.path.dirname(os.getcwd()), 'saved_recordings')
 
+        # Read config
+        rospack = rospkg.RosPack()
+        try:
+            path = rospack.get_path('antobot_description')
+            with open(path + '/config/platform_config.yaml', 'r') as file:
+                params = yaml.safe_load(file)
+
+        except Exception as e:
+            print(f"Failed to read robot config file, error: {e}")
+            raise
+
         # Create and setup camera
-        cam_position = 'left' 
-        self.cam = RPiInsightCamera(preview=True, raw=False, framerate=30)
-        self.cam_name = f'RP_{cam_position}'
-        self.srv_name = f'/antobot_devices_camera/RP/recording/{cam_position}'
+        try:
+            if "camera" in params:
+                for cam_type in params["camera"]:
+                    mode = params["camera"][cam_type]["mode"]
+                    cam_position = params["camera"][cam_type]["location"]
+
+                    self.cam_name = f'RP_{cam_position}'
+                    self.srv_name = f"/antobot_devices_camera/{cam_type}/{mode}/{cam_position}"
+                    
+                    if "dual" in params["camera"][cam_type].keys() and params["camera"][cam_type]["dual"] is True:
+                        # make 2 cameras
+                        self.cams = [
+                            RPiInsightCamera(preview=False, raw=False, framerate=30, cam_num=0),
+                            RPiInsightCamera(preview=False, raw=False, framerate=30, cam_num=1)
+                        ]
+
+                    else:
+                        #make one camera
+                        self.cams = [
+                            RPiInsightCamera(preview=False, raw=False, framerate=30, cam_num=0)
+                            , 
+                        ]
+
+                    # only supporting one camera
+                    break
+        except KeyError as e:
+            print(f"KeyError in camera setup. Is platform_config.yaml properly defined? Error: {e}")
+            raise
+        except Exception as e:
+            print(f"Failed to setup camera(s). Error: {e}")
+            raise
+
+        # Setup GPS logging 
+        try:
+            if "gps" in params:
+                self.use_gps = True
+            
+                if "urcu" in params["gps"]:
+                    self.robot_gps_sub = rospy.Subscriber("/am_gps_urcu", NavSatFix, self.gps_callback)
+                elif "scouting_box" in params["gps"]:
+                    self.robot_gps_sub = rospy.Subscriber("/antobot_f9p_usb", NavSatFix, self.gps_callback)
+                else:
+                    # There is a gps key but no key for the platform type. 
+                    raise ValueError("platform_config.yaml has a GPS key but there is no key for the platform type.")
+        except KeyError as e:
+            print(f"KeyError in GPS logging setup. Is platform_config.yaml properly defined? Error: {e}")
+            raise
+        except Exception as e:
+            print(f"Failed to setup GPS logging. Error: {e}")
+            raise
+        finally:
+            self.gps = []
 
         # Create and set up stream
         self.enable_stream = True
         if self.enable_stream:
             from preview_streamer import PreviewStreamer
-            self.streamer = PreviewStreamer(self.cam.stream_track)
+            self.streamer = PreviewStreamer(self.cams[0].stream_track)
         else:
             self.streamer = None
        
@@ -103,11 +162,6 @@ class camRecord:
         
         self.master_check_thread = threading.Thread(target=is_master_running)
         self.master_check_thread.start()
-
-        self.use_gps = False
-        if self.use_gps:
-            self.robot_gps_sub = rospy.Subscriber("/am_gps_urcu", NavSatFix, self.gps_callback)
-        self.gps = []
 
         signal(SIGINT, self.signal_handler)  # Allow interrupt from keyboard (CTRL + C).
 
@@ -237,28 +291,26 @@ class camRecord:
 
         return return_msg
 
+
     def open_camera(self):
         """
-        Opens the camera and displays preview if initialised.
+        Opens all cameras and displays preview if initialised.
 
         Returns:
             success (bool) : True if camera is open, False if it didn't open
 
         """
+        # For each camera, if not already opened, try to open.
+        for cam in self.cams:
+            if not cam.is_open():
+                cam.open_camera()
 
-        # If the camera is already opened, return straight away
-        if self.cam.is_open():
-            return True
-
-        # Try to open camera
-        self.cam.open_camera()
-
-        # Check the camera opened, if not return False
-        if self.cam.is_open():
+        # Check all cameras are opened, if not return False
+        if self.is_every_cam_open():
             return True
         else:
             return False
-        
+                
 
     def close_camera(self):
         """
@@ -267,22 +319,20 @@ class camRecord:
         Returns:
             success (bool) : True if camera is closed, False if it didn't close
         """
+        # For each camera, stop recording and close camera.
+        for cam in self.cams:
+            if cam.is_recording():
+                cam.stop_recording()
 
+            if cam.is_open():
+                cam.close_camera()
 
-        if not self.cam.is_open():
-            return True
-        
-         # If recording hasn't been stopped, stop it first
-        if self.is_cam_recording(): 
-            self.stop_recording()
-
-        if self.cam.is_open():
-            self.cam.close_camera()
-
-        if not self.cam.is_open():
-            return True
-        else:
+        # Check no cameras are open, if so return False        
+        if self.is_any_cam_open():
             return False
+        else:
+            return True
+
 
     def start_recording(self):
         """
@@ -292,29 +342,30 @@ class camRecord:
             success (bool): True if recording is started, False if recording failed to start
         """
         
-        # check if camera is opened, if not, open camera first
-        if not self.cam.is_open():
-            success = self.open_camera()
-            if not success:
-                return False
-
-        # if the camera is already recording, return straight away
-        if self.is_cam_recording():
+        # if the cameras are already recording, return straight away
+        if self.is_every_cam_recording():
             return True
+        
+        # check if cameras are opened, if not, open cameras first
+        if not self.is_every_cam_open():
+            if not self.open_camera():
+                # if cameras fail to open, return False
+                return False
 
         # clear dict
         self.json_dict = self.init_metadata()
 
         if self.use_gps:
-            self.json_dict['origin']['latitude'] = rospy.get_param('/GPS_origin/latitude')
-            self.json_dict['origin']['longitude'] = rospy.get_param('/GPS_origin/longitude')
+            self.json_dict['origin']['latitude'] = rospy.get_param('/GPS_origin/latitude',0)
+            self.json_dict['origin']['longitude'] = rospy.get_param('/GPS_origin/longitude',0)
             self.json_dict['gps'] = []
 
         # Setup and start encoders
-        self.cam.start_recording(self.output_basename)
+        for cam in self.cams:
+            cam.start_recording(self.output_basename)
 
         # Check recording has started
-        if self.is_cam_recording():
+        if self.is_every_cam_recording():
             return True
         else:
             return False
@@ -329,31 +380,87 @@ class camRecord:
         """
         
         # if the camera is already stopped, return straight away
-        if not self.is_cam_recording():
+        if not self.is_any_cam_recording():
             return True
         
-        # if recording hasn't been stopped, stop it
-        if self.is_cam_recording():
-            
-            # Stop recording and store camera per frame metadata
-            self.json_dict['cam_metadata'] = self.cam.stop_recording()          
-            self.write_metadata()
+        # Stop recording and store camera per frame metadata
+        metadata_list = []
+        for cam in self.cams:
+            md = cam.stop_recording()
+            metadata_list.append(md)
+        
+        self.json_dict['cam_metadata'] = metadata_list
+        self.write_metadata()
 
         # Check recording has stopped
-        if not self.is_cam_recording():
+        if not self.is_any_cam_recording():
             return True
         else:
             return False
 
 
-    def is_cam_recording(self):
+    def is_every_cam_recording(self):
         """
-        Returns True if the camera is recording, otherwise False.
+        Returns True if every camera is recording, otherwise False.
 
         Returns:
-            out (bool): True if camera is recording
+            out (bool): True if every camera is recording. False if one or more isn't.
         """
-        return self.cam.is_recording()
+        for cam in self.cams:
+            if not cam.is_recording():
+                # if any cam ISN'T recording, return false
+                return False
+        
+        # if we get to here, all cameras are recording
+        return True
+    
+
+    def is_any_cam_recording(self):
+        """
+        Returns True if any of the cameras is recording, otherwise False.
+
+        Returns:
+            out (bool): True if one or more camera is recording. False if none are recording.
+        """
+        for cam in self.cams:
+            if cam.is_recording():
+                # if any of the cameras is recording, return True
+                return True
+        
+        # if we get to here, no camera is recording
+        return False
+    
+
+    def is_every_cam_open(self):
+        """
+        Returns True if every camera is open, otherwise False.
+
+        Returns:
+            out (bool): True if every camera is open. False if one or more isn't.
+        """
+        for cam in self.cams:
+            if not cam.is_open():
+                # if any cam ISN'T open, return false
+                return False
+        
+        # if we get to here, all cameras are open
+        return True
+    
+
+    def is_any_cam_open(self):
+        """
+        Returns True if any of the cameras is open, otherwise False.
+
+        Returns:
+            out (bool): True if one or more camera is open. False if none are open.
+        """
+        for cam in self.cams:
+            if cam.is_open():
+                # if any of the cameras is open, return True
+                return True
+        
+        # if we get to here, no camera is open
+        return False
 
 
     def signal_handler(self, signal_received, frame):
@@ -368,6 +475,7 @@ class camRecord:
         self.close_camera()
         exit(0)
 
+
     def gps_callback(self, msg):
         
         if self.use_gps:
@@ -381,6 +489,7 @@ class camRecord:
 
             # Write to metadata dict
             self.json_dict['gps'].append(entry)
+
 
     def write_metadata(self):
         """
