@@ -33,10 +33,8 @@ import json
 import psutil
 import shutil
 import threading
-from pathlib import Path
 from signal import signal, SIGINT
-from datetime import datetime, timedelta
-from datetime import time as t
+from picamera2 import Picamera2
 
 import rospy
 import rospkg
@@ -87,6 +85,9 @@ class camRecord:
             print(f"Failed to read robot config file, error: {e}")
             raise
 
+        avaiable_cams = self.get_connected_camera_info()
+        print(f"Avaiable Cameras: {avaiable_cams}")
+
         # Create and setup camera
         try:
             if "camera" in params:
@@ -100,14 +101,14 @@ class camRecord:
                     if "dual" in params["camera"][cam_type].keys() and params["camera"][cam_type]["dual"] is True:
                         # make 2 cameras
                         self.cams = [
-                            RPiInsightCamera(preview=False, raw=False, framerate=30, cam_num=0),
-                            RPiInsightCamera(preview=False, raw=False, framerate=30, cam_num=1)
+                            RPiInsightCamera(preview=True, raw=False, framerate=30, cam=avaiable_cams[0]),
+                            RPiInsightCamera(preview=True, raw=False, framerate=30, cam=avaiable_cams[1])
                         ]
 
                     else:
                         #make one camera
                         self.cams = [
-                            RPiInsightCamera(preview=False, raw=False, framerate=30, cam_num=0)
+                            RPiInsightCamera(preview=True, raw=False, framerate=30, cam=avaiable_cams[0])
                             , 
                         ]
 
@@ -120,13 +121,14 @@ class camRecord:
             print(f"Failed to setup camera(s). Error: {e}")
             raise
 
-        # Setup GPS logging 
+        # Setup GPS logging
+        self.use_gps = False 
         try:
             if "gps" in params:
                 self.use_gps = True
             
                 if "urcu" in params["gps"]:
-                    self.robot_gps_sub = rospy.Subscriber("/am_gps_urcu", NavSatFix, self.gps_callback)
+                    self.robot_gps_sub = rospy.Subscriber("/antobot_gps", NavSatFix, self.gps_callback)
                 elif "scouting_box" in params["gps"]:
                     self.robot_gps_sub = rospy.Subscriber("/antobot_f9p_usb", NavSatFix, self.gps_callback)
                 else:
@@ -165,7 +167,17 @@ class camRecord:
 
         signal(SIGINT, self.signal_handler)  # Allow interrupt from keyboard (CTRL + C).
 
-        # rospy.spin()
+
+    
+    def get_connected_camera_info(self):
+        """
+        Detect available cameras and return their sensor name and camera number.
+
+        Returns:
+            list of dicts: [{'num': 0, 'model': 'imx296'}, ...]
+        """
+        cameras = Picamera2.global_camera_info()
+        return [{'num': i, 'model': cam.get('Model', 'Unknown').lower()} for i, cam in enumerate(cameras)]
 
     
     def manage_disk_space(self):
@@ -257,10 +269,15 @@ class camRecord:
             rec_path = request.recordingBasename
             name_start = rec_path.find('AntoManager')
             pkg_path = rospkg.RosPack().get_path('antobot_devices_camera')
-            # Go up two directories
-            package_root = os.path.abspath(os.path.join(pkg_path, '..', '..'))
+            name_end = pkg_path.find('Anto')
 
-            self.output_basename = os.path.join(package_root, rec_path[name_start:])
+            # temprary solution to check with new repo name
+            if name_start == -1:
+                name_start = rec_path.find('acManager')
+            if name_end == -1:
+                name_end = pkg_path.find('ac')
+
+            self.output_basename = os.path.join(pkg_path[:name_end], rec_path[name_start:])
             rospy.loginfo(self.output_basename)
 
             success = self.start_recording()
