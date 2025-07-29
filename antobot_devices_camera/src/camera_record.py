@@ -71,9 +71,10 @@ class camRecord:
             argv (sys.argv): system arguments
 
         """
-
+        self.json_dict = None
         self.save_path = os.path.join(os.path.dirname(os.getcwd()), 'saved_recordings')
-
+        params_camera = rospy.get_param('camera')
+        params_gps = rospy.get_param('gps')
         # Read config
         rospack = rospkg.RosPack()
         try:
@@ -90,15 +91,15 @@ class camRecord:
 
         # Create and setup camera
         try:
-            if "camera" in params:
-                for cam_type in params["camera"]:
-                    mode = params["camera"][cam_type]["mode"]
-                    cam_position = params["camera"][cam_type]["location"]
+            if params_camera:
+                for cam_type in params_camera:
+                    mode = params_camera[cam_type]["mode"]
+                    cam_position = params_camera[cam_type]["location"]
 
                     self.cam_name = f'RP_{cam_position}'
                     self.srv_name = f"/antobot_devices_camera/{cam_type}/{mode}/{cam_position}"
                     
-                    if "dual" in params["camera"][cam_type].keys() and params["camera"][cam_type]["dual"] is True:
+                    if "dual" in params_camera[cam_type] and params_camera[cam_type]["dual"] is True:
                         # make 2 cameras
                         self.cams = [
                             RPiInsightCamera(preview=True, raw=False, framerate=30, cam=avaiable_cams[0]),
@@ -124,12 +125,12 @@ class camRecord:
         # Setup GPS logging
         self.use_gps = False 
         try:
-            if "gps" in params:
+            if params_gps:
                 self.use_gps = True
             
-                if "urcu" in params["gps"]:
+                if "urcu" in params_gps:
                     self.robot_gps_sub = rospy.Subscriber("/antobot_gps", NavSatFix, self.gps_callback)
-                elif "scouting_box" in params["gps"]:
+                elif "scouting_box" in params_gps:
                     self.robot_gps_sub = rospy.Subscriber("/antobot_f9p_usb", NavSatFix, self.gps_callback)
                 else:
                     # There is a gps key but no key for the platform type. 
@@ -401,13 +402,10 @@ class camRecord:
             return True
         
         # Stop recording and store camera per frame metadata
-        metadata_list = []
         for cam in self.cams:
             md = cam.stop_recording()
-            metadata_list.append(md)
-        
-        self.json_dict['cam_metadata'] = metadata_list
-        self.write_metadata()
+            self.json_dict['cam_metadata'] = md
+            self.write_metadata(cam.cam_num)
 
         # Check recording has stopped
         if not self.is_any_cam_recording():
@@ -495,7 +493,7 @@ class camRecord:
 
     def gps_callback(self, msg):
         
-        if self.use_gps:
+        if self.use_gps and self.json_dict:
             # Put data from message into dictionary
             entry = {
                 'time': msg.header.stamp.to_nsec(),
@@ -508,12 +506,12 @@ class camRecord:
             self.json_dict['gps'].append(entry)
 
 
-    def write_metadata(self):
+    def write_metadata(self, num):
         """
         Dump metadata for one recording to a json file.
 
         """
-        filename = f"{self.output_basename}.json"
+        filename = f"{self.output_basename}_{num}.json"
 
         try:
             with open(filename, "w") as f:
