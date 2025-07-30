@@ -73,14 +73,14 @@ class camRecord:
         """
         self.json_dict = None
         self.save_path = os.path.join(os.path.dirname(os.getcwd()), 'saved_recordings')
-        params_camera = rospy.get_param('camera')
-        params_gps = rospy.get_param('gps')
         # Read config
         rospack = rospkg.RosPack()
         try:
-            path = rospack.get_path('antobot_description')
-            with open(path + '/config/platform_config.yaml', 'r') as file:
-                params = yaml.safe_load(file)
+            params_camera = rospy.get_param('camera')
+            params_gps = rospy.get_param('gps')
+            #path = rospack.get_path('antobot_description')
+            #with open(path + '/config/platform_config.yaml', 'r') as file:
+            #    params = yaml.safe_load(file)
 
         except Exception as e:
             print(f"Failed to read robot config file, error: {e}")
