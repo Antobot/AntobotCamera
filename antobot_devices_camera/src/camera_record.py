@@ -102,14 +102,14 @@ class camRecord:
                     if "dual" in params_camera[cam_type] and params_camera[cam_type]["dual"] is True:
                         # make 2 cameras
                         self.cams = [
-                            RPiInsightCamera(preview=True, raw=False, framerate=30, cam=avaiable_cams[0]),
-                            RPiInsightCamera(preview=True, raw=False, framerate=30, cam=avaiable_cams[1])
+                            RPiInsightCamera(preview=True, raw=False, framerate=50, cam=avaiable_cams[0]),
+                            RPiInsightCamera(preview=True, raw=False, framerate=50, cam=avaiable_cams[1])
                         ]
 
                     else:
                         #make one camera
                         self.cams = [
-                            RPiInsightCamera(preview=True, raw=False, framerate=30, cam=avaiable_cams[0])
+                            RPiInsightCamera(preview=True, raw=False, framerate=50, cam=avaiable_cams[0])
                             , 
                         ]
 
@@ -148,7 +148,17 @@ class camRecord:
         self.enable_stream = True
         if self.enable_stream:
             from preview_streamer import PreviewStreamer
-            self.streamer = PreviewStreamer(self.cams[0].stream_track)
+            if len(self.cams) >= 2:
+                track_dict = {
+                    "cam1": self.cams[0].stream_track,
+                    "cam2": self.cams[1].stream_track
+                }
+            else:
+                track_dict = {
+                    "cam1": self.cams[0].stream_track,
+                    "cam2": None
+                }
+            self.streamer = PreviewStreamer(track_dict)
         else:
             self.streamer = None
        
