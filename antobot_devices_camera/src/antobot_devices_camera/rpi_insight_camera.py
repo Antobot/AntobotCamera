@@ -272,6 +272,23 @@ class RPiInsightCamera:
                 return self.latest_request.make_array('main')
         else:
             return None
+
+    def capture_still(self, filepath):
+        """
+        
+
+        Returns: metadata
+            
+        """
+        if self.latest_request is not None:
+            with self.request_lock:
+
+                self.latest_request.save("main", f"{filepath}_{self.cam_num}.jpg")
+                self.latest_request.save_dng(f"{filepath}_{self.cam_num}.dng")
+
+                return self.latest_request.get_metadata()
+        else:
+            return None
         
     
     def camera_loop(self):

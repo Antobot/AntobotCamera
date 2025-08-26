@@ -102,14 +102,14 @@ class camRecord:
                     if "dual" in params_camera[cam_type] and params_camera[cam_type]["dual"] is True:
                         # make 2 cameras
                         self.cams = [
-                            RPiInsightCamera(preview=True, raw=False, framerate=30, cam=avaiable_cams[0]),
-                            RPiInsightCamera(preview=True, raw=False, framerate=30, cam=avaiable_cams[1])
+                            RPiInsightCamera(preview=False, raw=False, framerate=30, cam=avaiable_cams[0]),
+                            RPiInsightCamera(preview=False, raw=False, framerate=30, cam=avaiable_cams[1])
                         ]
 
                     else:
                         #make one camera
                         self.cams = [
-                            RPiInsightCamera(preview=True, raw=False, framerate=30, cam=avaiable_cams[0])
+                            RPiInsightCamera(preview=False, raw=False, framerate=30, cam=avaiable_cams[0])
                             , 
                         ]
 
@@ -303,12 +303,58 @@ class camRecord:
                 return_msg.responseCode = False
                 return_msg.responseString = f"{self.cam_name} failed to stop recording."
         
+        # ----------------------
+        #     CAPTURE STILL
+        # ----------------------
+        elif request.command == 5:
+            
+            self.output_basename = request.recordingBasename
+
+            success = self.capture_still()
+
+            if success:
+                return_msg.responseCode = True
+                return_msg.responseString = f"{self.cam_name} captured still image."
+            else:
+                return_msg.responseCode = False
+                return_msg.responseString = f"{self.cam_name} failed to capture still image."
 
         rospy.loginfo(f'SW4102: cameraRecord: Camera Request Command: {request.command}')
         rospy.loginfo(f'SW4102: cameraRecord: Camera Response : {return_msg.responseString}')
 
         return return_msg
 
+    def capture_still(self):
+        """
+        
+
+        Returns:
+            success (bool): 
+        """
+        
+        # check if cameras are opened, if not, open cameras first
+        if not self.is_every_cam_open():
+            if not self.open_camera():
+                # if cameras fail to open, return False
+                return False
+        
+        # clear dict
+        self.json_dict = self.init_metadata()
+
+        metadata_list = []
+
+        # Setup and start encoders
+        for cam in self.cams:
+            md = cam.capture_still(self.output_basename)
+            if not md:
+                return False
+            metadata_list.append(md)
+
+        self.json_dict['cam_metadata'] = metadata_list
+        self.write_metadata()
+
+        return True
+        
 
     def open_camera(self):
         """

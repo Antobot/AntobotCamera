@@ -157,6 +157,19 @@ class cameraManager:
             if not cams:
                 rospy.loginfo(f'SW2312: Camera Manager: No camera settings in the config file')
 
+        elif request.command == 5:  # capture still
+            if request.camera_num == 3:  # left camera
+                cams = self.cameras['left']
+
+            elif request.camera_num == 4:  # right camera
+                cams = self.cameras['right']
+
+            for cam in cams.values():
+                rospy.loginfo(f'SW2312: Camera Manager: Make request to capture still {cam.location} {cam.camType}.')
+                response = cam.captureStill(recording_basename)
+                return_msg.responseCode = response.responseCode
+                return_msg.responseString = response.responseString
+
         return return_msg
 
 
@@ -210,6 +223,28 @@ class Camera:
 
         else:
             rospy.loginfo('SW2312: CameraManager - Unable to make request - toggle camera recording state')
+            rospy.loginfo(
+                'SW2312: CameraManager - ROS service ' + self.cameraRecordClient.serviceName + ' is not available')
+
+        return response
+    
+    def captureStill(self, recording_basename):
+
+        response = cameraRecordResponse()
+
+        serviceState = self.cameraRecordClient.checkForService()
+        if serviceState:
+
+            self.cameraRecordClient.command = 5
+            self.cameraRecordClient.recording_basename = recording_basename
+
+            response = self.cameraRecordClient.sendCameraCommand()
+
+            if response.responseCode:
+                print('Camera manager says still capture success.')
+
+        else:
+            rospy.loginfo('SW2312: CameraManager - Unable to make request - capture still')
             rospy.loginfo(
                 'SW2312: CameraManager - ROS service ' + self.cameraRecordClient.serviceName + ' is not available')
 
