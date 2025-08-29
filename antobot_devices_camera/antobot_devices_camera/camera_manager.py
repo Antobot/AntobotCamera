@@ -19,8 +19,7 @@
 
 import sys
 import yaml
-import rospy
-import rospkg
+import rclpy
 from datetime import datetime
 from std_msgs.msg import Bool, String
 

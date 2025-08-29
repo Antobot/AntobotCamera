@@ -1,0 +1,9 @@
+int8 command	# 0 - open cam 1 - close cam, 2 - start recording, 3 - stop recording
+string recording_basename
+---
+bool response_code		# False - failure, True - success
+string response_string	# Additional info
+
+
+
+
