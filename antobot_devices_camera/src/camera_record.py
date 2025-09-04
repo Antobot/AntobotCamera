@@ -130,7 +130,7 @@ class camRecord:
             
                 if "urcu" in params_gps:
                     self.robot_gps_sub = rospy.Subscriber("/antobot_gps", NavSatFix, self.gps_callback)
-                elif "scouting_box" in params_gps:
+                elif "f9p_usb" in params_gps:
                     self.robot_gps_sub = rospy.Subscriber("/antobot_f9p_usb", NavSatFix, self.gps_callback)
                 else:
                     # There is a gps key but no key for the platform type. 
