@@ -88,6 +88,9 @@ class CameraStreamTrack(VideoStreamTrack):
         else:
             width = wc
             height = math.floor(hf/wf * width)
+        
+        width = width - width%2
+        height = height - height%2
 
         self.stream_dims = (height, width)
 
@@ -108,7 +111,7 @@ class CameraStreamTrack(VideoStreamTrack):
 
         # If frame is none, return green
         if frame is not None:
-            frame = np.rot90(frame)
+            frame = np.rot90(frame,-1)
             video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
             video_frame = video_frame.reformat(self.stream_dims[1], self.stream_dims[0])
         else:
@@ -129,7 +132,7 @@ class CameraStreamTrack(VideoStreamTrack):
         
 
 class RPiInsightCamera:
-    def __init__(self, preview=False, raw=False, framerate=30):
+    def __init__(self, preview=False, raw=False, framerate=30, cam={'num': 0, 'model': 'imx296'}):
         """
         Initialise Raspberry Pi camera configured for robot scouting.
 
@@ -151,7 +154,9 @@ class RPiInsightCamera:
         # Attributes
         self.vid_extension = 'h264'
         self.framerate = framerate
-        self.frame_dims = (2028,1080)
+        
+        self.cam_num = cam['num']
+        self.cam_model = cam['model']
 
         self.frame_lock = threading.Lock() # lock whilst a frame is being processed/encoded 
         self.request_lock = threading.Lock() # lock for reading/writing picamera requests
@@ -172,13 +177,26 @@ class RPiInsightCamera:
 
         # NB, once a camera closed, need to make a new instance of Picamera2() to open again
 
+        if self.cam_model == 'imx296':
+            self.frame_dims = (1456, 1088)
+            self.raw_format = 'SGBRG10'
+            self.bit_depth = 10
+            self.preview_size = (728, 544)
+        elif self.cam_model == 'imx477':
+            self.frame_dims = (2028, 1080)
+            self.raw_format = 'SGBRG12'
+            self.bit_depth = 12
+            self.preview_size = (1014, 540)
+
+
         # Create camera object with custom tuning file
+        self.tuning_file = self.cam_model + '.json'
         tuning_file = self.load_tuning_file()
-        self.cam = Picamera2(tuning=tuning_file)
+        self.cam = Picamera2(camera_num=self.cam_num, tuning=tuning_file)
 
         # Create raw and preview configurations if they have been requested
         if self.enable_preview:
-            lores_config = {'size': (1014,540)}
+            lores_config = {'size': self.preview_size}
             display_config = "lores"
         else:
             lores_config = None
@@ -187,7 +205,7 @@ class RPiInsightCamera:
         if self.enable_raw:
             raw_config = {
                 'size': self.frame_dims,
-                'format': 'SGBRG12'
+                'format': self.raw_format
             }
         else:
             raw_config = None
@@ -199,7 +217,7 @@ class RPiInsightCamera:
             # (Picamera2 docs, p.23)
             sensor={
                 'output_size': self.frame_dims,
-                'bit_depth': 12
+                'bit_depth': self.bit_depth
             }, 
             # set frame rate; 50 fps max in this sensor mode
             controls={
@@ -264,8 +282,16 @@ class RPiInsightCamera:
         When the record flag is set, it encodes requests and stores metadata.
         """
 
+        # expected_interval = 1.0 / self.framerate
+        # print(f"[CameraLoop] Target frame interval: {expected_interval:.3f} sec")
+
+        # frame_count = 0
+        # total_encode_time = 0
+        # last_fps_time = time.time()
+
         # Run loop until close flag is set
         while not self.close_flag:
+            # loop_start = time.time()
             
             # Capture request from camera system
             request = self.cam.capture_request(flush=False)
@@ -279,6 +305,8 @@ class RPiInsightCamera:
             # Note, whilst each pi camera function (e.g. encode) is thread safe, we don't want a mismatch of metadata and video frames
             with self.frame_lock:
                 if self.record_flag:
+                    # encode_start = time.time()
+
                     # Get camera metadata
                     md = request.get_metadata()
                     md_keys = ("SensorTimestamp",)
@@ -286,6 +314,11 @@ class RPiInsightCamera:
                             
                     # Encode frame from the request
                     self.main_encoder.encode("main", request)
+                    
+                    # encode_end = time.time()
+                    # encode_time = encode_end - encode_start
+                    # total_encode_time += encode_time
+                    # print(f"[ENCODE] Frame {frame_count} took {encode_time*1000:.2f} ms")
                     
                     # If raw is enabled, encode frame and use all metadata keys
                     if self.enable_raw:
@@ -295,6 +328,19 @@ class RPiInsightCamera:
                     # Add this frame's metadata
                     self.frame_metadata.append({k: md[k] for k in md_keys})
 
+
+            # loop_end = time.time()
+            # loop_time = loop_end - loop_start
+
+            # if loop_time > expected_interval:
+            #     print(f"[⚠] Slow loop: {loop_time:.3f}s (expected {expected_interval:.3f}s)")
+
+            # frame_count += 1
+            # if frame_count % 50 == 0:
+            #     elapsed = loop_end - last_fps_time
+            #     print(f"[FPS] ~{50 / elapsed:.2f} fps | Avg encode: {total_encode_time/50*1000:.2f} ms")
+            #     total_encode_time = 0
+            #     last_fps_time = time.time()
 
     def is_recording(self):
         """
@@ -325,8 +371,8 @@ class RPiInsightCamera:
         #Init camera here, rather than with class
         self.init_camera()
 
-        if self.enable_preview:
-            self.cam.start_preview(Preview.QTGL)
+        # if self.enable_preview:
+        #     self.cam.start_preview(Preview.QTGL)
 
         self.cam.start()
         
@@ -355,7 +401,7 @@ class RPiInsightCamera:
         # Use frame lock so we don't reconfigure encoders whilst they are being written
         with self.frame_lock:
             # Append extension to file path and assign encoder output
-            full_path_main = f"{filepath}.h264"
+            full_path_main = f"{filepath}_{self.cam_num}.h264"
             self.main_encoder.output = FileOutput(full_path_main)
             
             # Assign raw stream outputs
@@ -429,7 +475,7 @@ class RPiInsightCamera:
         #  > holds gain at 0th value, ramps to 1st shutter value 
         #  > holds shutter at 1st value, ramps to 1st gain value
         #  > alternate ramping to shutter and gain values, maxing out at final values in list
-        tuning = Picamera2.load_tuning_file("imx477.json")
+        tuning = Picamera2.load_tuning_file(self.tuning_file)
         algo = Picamera2.find_tuning_algo(tuning, "rpi.agc")
         algo["channels"][0]["exposure_modes"]["custom"] = {
             "shutter": [100, 1000, 2000, 5000, 10000], 
