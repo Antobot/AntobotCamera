@@ -148,7 +148,17 @@ class camRecord:
         self.enable_stream = True
         if self.enable_stream:
             from preview_streamer import PreviewStreamer
-            self.streamer = PreviewStreamer(self.cams[0].stream_track)
+            if len(self.cams) >= 2:
+                track_dict = {
+                    "cam1": self.cams[0].stream_track,
+                    "cam2": self.cams[1].stream_track
+                }
+            else:
+                track_dict = {
+                    "cam1": self.cams[0].stream_track,
+                    "cam2": None
+                }
+            self.streamer = PreviewStreamer(track_dict)
         else:
             self.streamer = None
        
@@ -268,17 +278,10 @@ class camRecord:
 
             # update recording directory if the raspberry pi is not master device
             rec_path = request.recordingBasename
-            name_start = rec_path.find('AntoManager')
-            pkg_path = rospkg.RosPack().get_path('antobot_devices_camera')
-            name_end = pkg_path.find('Anto')
-
-            # temprary solution to check with new repo name
-            if name_start == -1:
-                name_start = rec_path.find('acManager')
-            if name_end == -1:
-                name_end = pkg_path.find('ac')
-
-            self.output_basename = os.path.join(pkg_path[:name_end], rec_path[name_start:])
+            USERNAME = os.environ.get("USER")
+            if not USERNAME:
+                USERNAME = "cart"
+            self.output_basename = os.path.join("/home", USERNAME, rec_path.lstrip("/"))
             rospy.loginfo(self.output_basename)
 
             success = self.start_recording()
@@ -308,7 +311,14 @@ class camRecord:
         # ----------------------
         elif request.command == 5:
             
-            self.output_basename = request.recordingBasename
+            rec_path = request.recordingBasename
+            USERNAME = os.environ.get("USER")
+            if not USERNAME:
+                USERNAME = "cart"
+            self.output_basename = os.path.join("/home", USERNAME, rec_path.lstrip("/"))
+            rospy.loginfo(self.output_basename)
+
+            # self.output_basename = request.recordingBasename
 
             success = self.capture_still()
 
@@ -351,7 +361,7 @@ class camRecord:
             metadata_list.append(md)
 
         self.json_dict['cam_metadata'] = metadata_list
-        self.write_metadata()
+        self.write_metadata(cam.cam_num)
 
         return True
         
