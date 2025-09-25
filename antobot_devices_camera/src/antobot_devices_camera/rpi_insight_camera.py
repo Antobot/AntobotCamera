@@ -477,7 +477,7 @@ class RPiInsightCamera:
         #  > alternate ramping to shutter and gain values, maxing out at final values in list
         tuning = Picamera2.load_tuning_file(self.tuning_file)
         algo = Picamera2.find_tuning_algo(tuning, "rpi.agc")
-        algo["channels"][0]["exposure_modes"]["custom"] = {
+        algo["channels"][0]["exposure_modes"]["normal"] = { #NOTE: workaround for libcamera bug to update normal exposure mode
             "shutter": [100, 1000, 2000, 5000, 10000], 
             "gain": [1.0, 8.0, 12.0, 16.0, 80.0]
         }
@@ -494,12 +494,12 @@ class RPiInsightCamera:
         #NOTE: in future, this method could take arguments to supply different control values for different scenarios, or load from a file
 
         # Set camera controls, including use custom exposure mode
-        # Ignore the warnings about custom exposure mode, it does appear use the right settings
+        # Due to the current bug with libcamera, we are using and have modified the normal exposure mode
         cam_controls = {
             "AwbEnable": True,
             "AeEnable": True,
             "AeConstraintMode": controls.AeConstraintModeEnum.Highlight,
-            "AeExposureMode": controls.AeExposureModeEnum.Custom,
+            "AeExposureMode": controls.AeExposureModeEnum.Normal,
             "AeFlickerMode": controls.AeFlickerModeEnum.Manual,
             "AeFlickerPeriod": 10000
         }
