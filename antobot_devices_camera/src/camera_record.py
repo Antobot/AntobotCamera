@@ -98,18 +98,23 @@ class camRecord:
 
                     self.cam_name = f'RP_{cam_position}'
                     self.srv_name = f"/antobot_devices_camera/{cam_type}/{mode}/{cam_position}"
-                    
+
+                    # get raw, framerate and frame_dims from config or use defaults
+                    raw = params_camera[cam_type]["raw"] if "raw" in params_camera[cam_type] else False
+                    framerate = params_camera[cam_type]["framerate"] if "framerate" in params_camera[cam_type] else 30
+                    frame_dims = tuple(params_camera[cam_type]["frame_dims"]) if "frame_dims" in params_camera[cam_type] else None
+
                     if "dual" in params_camera[cam_type] and params_camera[cam_type]["dual"] is True:
                         # make 2 cameras
                         self.cams = [
-                            RPiInsightCamera(preview=False, raw=False, framerate=30, cam=avaiable_cams[0]),
-                            RPiInsightCamera(preview=False, raw=False, framerate=30, cam=avaiable_cams[1])
+                            RPiInsightCamera(preview=False, raw=raw, framerate=framerate, frame_dims=frame_dims, cam=avaiable_cams[0]),
+                            RPiInsightCamera(preview=False, raw=raw, framerate=framerate, frame_dims=frame_dims, cam=avaiable_cams[1])
                         ]
 
                     else:
                         #make one camera
                         self.cams = [
-                            RPiInsightCamera(preview=False, raw=False, framerate=30, cam=avaiable_cams[0])
+                            RPiInsightCamera(preview=False, raw=raw, framerate=framerate, frame_dims=frame_dims, cam=avaiable_cams[0])
                             , 
                         ]
 

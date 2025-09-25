@@ -132,7 +132,7 @@ class CameraStreamTrack(VideoStreamTrack):
         
 
 class RPiInsightCamera:
-    def __init__(self, preview=False, raw=False, framerate=30, cam={'num': 0, 'model': 'imx296'}):
+    def __init__(self, preview=False, raw=False, framerate=30, frame_dims=None, cam={'num': 0, 'model': 'imx296'}):
         """
         Initialise Raspberry Pi camera configured for robot scouting.
 
@@ -154,6 +154,7 @@ class RPiInsightCamera:
         # Attributes
         self.vid_extension = 'h264'
         self.framerate = framerate
+        self.requested_frame_dims = frame_dims
         
         self.cam_num = cam['num']
         self.cam_model = cam['model']
@@ -183,10 +184,13 @@ class RPiInsightCamera:
             self.bit_depth = 10
             self.preview_size = (728, 544)
         elif self.cam_model == 'imx477':
-            self.frame_dims = (2028, 1080)
+            self.frame_dims = self.requested_frame_dims if self.requested_frame_dims is not None else (2028, 1080)
             self.raw_format = 'SGBRG12'
             self.bit_depth = 12
-            self.preview_size = (1014, 540)
+            # set preview size to 640px long edge, keeping aspect ratio
+            aspect_ratio = self.frame_dims[0] / self.frame_dims[1]
+            height = 640 # long edge
+            self.preview_size = (height, int(height / aspect_ratio)) #(1014, 540)
 
 
         # Create camera object with custom tuning file
