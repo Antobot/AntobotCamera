@@ -111,9 +111,10 @@ class CameraStreamTrack(VideoStreamTrack):
 
         # If frame is none, return green
         if frame is not None:
-            frame = np.rot90(frame,-1)
+            # frame = np.rot90(frame,-1)
             video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
-            video_frame = video_frame.reformat(self.stream_dims[1], self.stream_dims[0])
+            # video_frame = video_frame.reformat(self.stream_dims[1], self.stream_dims[0])
+            # video_frame = video_frame.reformat(self.stream_dims[0], self.stream_dims[1])
         else:
             video_frame = VideoFrame(width=self.stream_dims[1], height=self.stream_dims[0])
 
