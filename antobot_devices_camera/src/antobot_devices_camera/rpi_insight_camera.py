@@ -309,7 +309,7 @@ class RPiInsightCamera:
 
                     # Get camera metadata
                     md = request.get_metadata()
-                    md_keys = ("SensorTimestamp",)
+                    md_keys = ("SensorTimestamp", "ExposureTime")
                     # md_keys = ("SensorTimestamp", "ExposureTime", "AnalogueGain", "Lux", "ColourGains")
                             
                     # Encode frame from the request
