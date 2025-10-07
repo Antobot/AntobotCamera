@@ -292,16 +292,20 @@ class RPiInsightCamera:
 
     def capture_still(self, filepath):
         """
-        
-
-        Returns: metadata
+        Save still image from main as jpg and raw as dng if enabled.
             
+        Args:
+            filepath (str): file path to save still image
+
+        Returns:
+            metadata (dict): metadata of the still image
         """
         if self.latest_request is not None:
             with self.request_lock:
 
                 self.latest_request.save("main", f"{filepath}_{self.cam_num}.jpg")
-                self.latest_request.save_dng(f"{filepath}_{self.cam_num}.dng")
+                if self.enable_raw:
+                    self.latest_request.save_dng(f"{filepath}_{self.cam_num}.dng")
 
                 return self.latest_request.get_metadata()
         else:
