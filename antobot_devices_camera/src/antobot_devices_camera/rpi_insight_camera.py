@@ -43,7 +43,7 @@ class CameraStreamTrack(VideoStreamTrack):
     """
     A video track that captures frames from a callback to the latest pi camera request
     """
-    def __init__(self, read_array_callback, frame_dims):
+    def __init__(self, read_array_callback, frame_dims, rotation=0):
         """
         Initialise a CameraStreamTrack
 
@@ -62,8 +62,10 @@ class CameraStreamTrack(VideoStreamTrack):
         
         # Placeholder for stream dimensions, calculated and updated when stream is requested
         # (height, width)
-        self.stream_dims = self.camera_dims
+        self.stream_dims = None
         
+        # Attribute to be read by external streamer
+        self.rotation = rotation
 
     def set_size(self, width, height):
         """
@@ -107,14 +109,22 @@ class CameraStreamTrack(VideoStreamTrack):
         pts, time_base = await self.next_timestamp()
 
         # Read latest frame from RPiInsightCam
-        frame = self.read_frame()  
+        frame = self.read_frame(stream='lores')  
 
         # If frame is none, return green
         if frame is not None:
-            # frame = np.rot90(frame,-1)
+            # to maintain backward compatibility, rotate if the stream dimensions have been set
+            # use rotation attribute to determine the number of 90 degree rotations
+            if self.stream_dims is not None:
+                frame = np.rot90(frame, -self.rotation // 90)
+            
+            # convert to video frame
             video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
-            # video_frame = video_frame.reformat(self.stream_dims[1], self.stream_dims[0])
-            # video_frame = video_frame.reformat(self.stream_dims[0], self.stream_dims[1])
+            
+            # to maintain backward compatibility, resize if the stream dimensions have been set
+            if self.stream_dims is not None:
+                video_frame = video_frame.reformat(self.stream_dims[1], self.stream_dims[0])
+            
         else:
             video_frame = VideoFrame(width=self.stream_dims[1], height=self.stream_dims[0])
 
@@ -133,7 +143,7 @@ class CameraStreamTrack(VideoStreamTrack):
         
 
 class RPiInsightCamera:
-    def __init__(self, preview=False, raw=False, framerate=30, frame_dims=None, cam={'num': 0, 'model': 'imx296'}):
+    def __init__(self, preview=False, raw=False, framerate=30, frame_dims=None, cam={'num': 0, 'model': 'imx296'}, rotation=0):
         """
         Initialise Raspberry Pi camera configured for robot scouting.
 
@@ -156,6 +166,7 @@ class RPiInsightCamera:
         self.vid_extension = 'h264'
         self.framerate = framerate
         self.requested_frame_dims = frame_dims
+        self.rotation = rotation
         
         self.cam_num = cam['num']
         self.cam_model = cam['model']
@@ -186,7 +197,7 @@ class RPiInsightCamera:
             self.preview_size = (728, 544)
         elif self.cam_model == 'imx477':
             self.frame_dims = self.requested_frame_dims if self.requested_frame_dims is not None else (2028, 1080)
-            self.raw_format = 'SGBRG12'
+            self.raw_format = 'SBGGR12'
             self.bit_depth = 12
             # set preview size to 640px long edge, keeping aspect ratio
             aspect_ratio = self.frame_dims[0] / self.frame_dims[1]
@@ -201,8 +212,8 @@ class RPiInsightCamera:
 
         # Create raw and preview configurations if they have been requested
         if self.enable_preview:
-            lores_config = {'size': self.preview_size}
-            display_config = "lores"
+            lores_config = {'size': self.preview_size, 'format': 'RGB888'}
+            display_config = None
         else:
             lores_config = None
             display_config = None
@@ -263,18 +274,19 @@ class RPiInsightCamera:
             self.raw_encoder.format = config["raw"]["format"]
 
         # Create video track for stream
-        self.stream_track = CameraStreamTrack(self.read_request_array, self.frame_dims)
+        self.stream_track = CameraStreamTrack(self.read_request_array, self.frame_dims, self.rotation)
 
-    def read_request_array(self):
+    def read_request_array(self, stream='main'):
         """
         Callback to read the latest frame as an array.
 
         Returns:
             out ( array | None ) : numpy array of image or None if no request available
+            stream (str): 'main', 'raw' or 'lores'
         """
         if self.latest_request is not None:
             with self.request_lock:
-                return self.latest_request.make_array('main')
+                return self.latest_request.make_array(stream)
         else:
             return None
 

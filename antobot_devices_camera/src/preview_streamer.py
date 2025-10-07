@@ -77,7 +77,10 @@ class PreviewStreamer:
         track_reference = self.track_reference.get(cam_id)
         # Setup and add track to connection         
         if track_reference is not None:
-            track_reference.set_size(params["width"], params["height"])
+            # set size if provided for backwards compatibility
+            if "width" in params and "height" in params:
+                track_reference.set_size(params["width"], params["height"])
+            
             pc.addTrack(track_reference)
         else:
             log_info("Tried to add track but track for {cam_id} is None")
@@ -92,7 +95,11 @@ class PreviewStreamer:
         return web.Response(
             content_type="application/json",
             text=json.dumps(
-                {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
+                {
+                    "sdp": pc.localDescription.sdp, 
+                    "type": pc.localDescription.type,
+                    "metadata": {"rotation": track_reference.rotation if track_reference is not None else 0}
+                }
             ),
             headers={
                 "X-Custom-Server-Header": "Custom data",

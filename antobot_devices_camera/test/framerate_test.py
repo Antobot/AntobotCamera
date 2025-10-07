@@ -71,11 +71,13 @@ if __name__ == "__main__":
     # analyse_stamps(md0)
     # analyse_stamps(md1)
 
-    with open('/home/ant/catkin_ws/src/scoutRecord/AntoManager/antobot_manager_data/data/data/session_078/15_51_06.json', 'r') as file:
+    with open('/home/ant/acData/camera/data/data/session_064/17_50_13_0.json', 'r') as file:
         txt = file.read()
         data = json.loads(txt)
 
-    for md in data["cam_metadata"]:
-        analyse_stamps(md)
+    # for md in data["cam_metadata"]:
+    #     analyse_stamps(md)
+
+    analyse_stamps(data["cam_metadata"])
 
     
