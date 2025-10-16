@@ -23,10 +23,12 @@ import rclpy
 from datetime import datetime
 from std_msgs.msg import Bool, String
 
-
-from antobot_camera_msgs.srv import camManager, camManagerResponse
-from antobot_camera_msgs.srv import cameraRecord, cameraRecordResponse
+from antobot_camera_msgs.srv import CamManager
+from antobot_camera_msgs.srv import CameraRecord
 from cameraRecordClient import cameraRecordClient
+
+from ament_index_python.packages import get_package_share_directory
+
 
 
 
@@ -39,7 +41,7 @@ class cameraManager:
         self.cameras = {}
         self.read_config_file()
         try:
-            self.sim = rospy.get_param("/simulation")
+            self.sim = rclpy.get_param("/simulation")
 
         except:
             self.sim=False # If the simulation parameter has not been assigned, assume not a simulation
@@ -56,17 +58,18 @@ class cameraManager:
 
 
         # Create a service to allow other nodes to start/stop cameras
-        self.srvCamMgr = rospy.Service("/antobot/camera_manager/camera", camManager, self._serviceCallbackCamMgr)
+        self.srvCamMgr = rclpy.Service("/antobot/camera_manager/camera", CamManager, self._serviceCallbackCamMgr)
 
         
         
-        self.pub_scout_light = rospy.Publisher("/antobot_manager_device/scout_light",Bool, queue_size=1)
+        self.pub_scout_light = rclpy.Publisher("/antobot_manager_device/scout_light",Bool, queue_size=1)
 
     def read_config_file(self):
-        rospack = rospkg.RosPack()
+        # rospack = rospkg.RosPack()
 
         try:
-            path = rospack.get_path('antobot_description')
+            path = get_package_share_directory('antobot_description')
+            # path = rospack.get_path('antobot_description')
             with open(path + '/config/platform_config.yaml', 'r') as file:
                 params = yaml.safe_load(file)
 
@@ -84,7 +87,7 @@ class cameraManager:
 
                     # Todo: launch corresponding camera node on carrier board
             else:
-                rospy.loginfo(f'SW2312: Camera Manager: No camera settings found in config')
+                rclpy.loginfo(f'SW2312: Camera Manager: No camera settings found in config')
 
         except Exception as e:
             print(f"Failed to read robot config file, error: {e}")
@@ -108,7 +111,7 @@ class cameraManager:
         #string responseString	# Additional info
 
         # Create the return message
-        return_msg = camManagerResponse()
+        return_msg = CamManager.Response
         cams = None
 
         recording_basename = request.recording_basename
@@ -122,8 +125,8 @@ class cameraManager:
 
             for cam in cams.values():
                 if cam:
-                    rospy.loginfo(f'SW2312: Camera Manager: {cam.location} {cam.camType} camera open state: {cam.isOpen}')
-                    rospy.loginfo(f'SW2312: Camera Manager: Make request to toggle {cam.location} {cam.camType} camera open state')
+                    rclpy.loginfo(f'SW2312: Camera Manager: {cam.location} {cam.camType} camera open state: {cam.isOpen}')
+                    rclpy.loginfo(f'SW2312: Camera Manager: Make request to toggle {cam.location} {cam.camType} camera open state')
                     response = cam.toggleOpen()
                     return_msg.responseCode = response.responseCode
                     return_msg.responseString = response.responseString
@@ -137,8 +140,8 @@ class cameraManager:
                 cams = self.cameras['right']
 
             for cam in cams.values():
-                rospy.loginfo(f'SW2312: Camera Manager: {cam.location} {cam.camType} camera recording state: {cam.isRecording}')
-                rospy.loginfo(f'SW2312: Camera Manager: Make request to toggle {cam.location} {cam.camType} camera recording state')
+                rclpy.loginfo(f'SW2312: Camera Manager: {cam.location} {cam.camType} camera recording state: {cam.isRecording}')
+                rclpy.loginfo(f'SW2312: Camera Manager: Make request to toggle {cam.location} {cam.camType} camera recording state')
                 response = cam.toggleRecording(recording_basename)
                 return_msg.responseCode = response.responseCode
                 return_msg.responseString = response.responseString
@@ -146,15 +149,15 @@ class cameraManager:
                 if cam.camType == 'zed':  # only check the zed status for now
                     if cam.isRecording:
                         self.pub_scout_light.publish(True)  # only turn on scouting light when camera starts recording
-                        rospy.loginfo(
+                        rclpy.loginfo(
                             f'SW2312: Camera Manager: Scouting light turn on')
                     else:
                         self.pub_scout_light.publish(False)  # turn off scouting light when camera stops recording
-                        rospy.loginfo(
+                        rclpy.loginfo(
                             f'SW2312: Camera Manager: Scouting light turn off')
 
             if not cams:
-                rospy.loginfo(f'SW2312: Camera Manager: No camera settings in the config file')
+                rclpy.loginfo(f'SW2312: Camera Manager: No camera settings in the config file')
 
         return return_msg
 
@@ -173,7 +176,7 @@ class Camera:
         
     def toggleOpen(self):
 
-        response = cameraRecordResponse()
+        response = CameraRecord.Response ()
 
         serviceState = self.cameraRecordClient.checkForService()
         if serviceState:
@@ -185,8 +188,8 @@ class Camera:
                 self.isOpen = not self.isOpen
 
         else:
-            rospy.loginfo('SW2312: CameraManager - Unable to make request - toggle camera open state')
-            rospy.loginfo(
+            rclpy.loginfo('SW2312: CameraManager - Unable to make request - toggle camera open state')
+            rclpy.loginfo(
                 'SW2312: CameraManager - ROS service ' + self.cameraRecordClient.serviceName + ' is not available')
 
         return response
@@ -194,7 +197,7 @@ class Camera:
 
     def toggleRecording(self, recording_basename):
 
-        response = cameraRecordResponse()
+        response = CameraRecord.Response ()
 
         serviceState = self.cameraRecordClient.checkForService()
         if serviceState:
@@ -208,8 +211,8 @@ class Camera:
                 self.isRecording = not self.isRecording
 
         else:
-            rospy.loginfo('SW2312: CameraManager - Unable to make request - toggle camera recording state')
-            rospy.loginfo(
+            rclpy.loginfo('SW2312: CameraManager - Unable to make request - toggle camera recording state')
+            rclpy.loginfo(
                 'SW2312: CameraManager - ROS service ' + self.cameraRecordClient.serviceName + ' is not available')
 
         return response
@@ -221,14 +224,14 @@ class Camera:
 ######################################################################################################
 
 def main(args):
-    
-    rospy.init_node('cameraManager', anonymous=False)
+
+    rclpy.init_node('cameraManager', anonymous=False)
     camManager = cameraManager()
 
-    rate = rospy.Rate(10) # 10hz
+    rate = rclpy.Rate(10) # 10hz
 
     # Due to rospy only allowing nodes to be called from within the main thread, we need to move them into here
-    while not rospy.is_shutdown():
+    while not rclpy.is_shutdown():
         rate.sleep()
 
 if __name__ == '__main__':

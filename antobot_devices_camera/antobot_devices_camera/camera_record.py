@@ -26,11 +26,11 @@ from signal import signal, SIGINT
 from datetime import datetime, timedelta
 from datetime import time as t
 
-import rospy
+import rclpy
 import rospkg
-import rostopic
+# import rostopic
 import tf2_ros
-from antobot_camera_msgs.srv import cameraRecord, cameraRecordResponse
+from antobot_camera_msgs.srv import CameraRecord
 from sensor_msgs.msg import NavSatFix   
 
 from antobot_devices_camera.rpi_insight_camera import RPiInsightCamera
