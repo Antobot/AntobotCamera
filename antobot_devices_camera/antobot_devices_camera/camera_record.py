@@ -1,6 +1,19 @@
 #! /usr/bin python3
-# Copyright (c) 2022, ANTOBOT LTD.
+# Copyright (c) 2025, ANTOBOT LTD.
 # All rights reserved.
+
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
@@ -13,46 +26,29 @@
 
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-
 import os
 import time
-import yaml
 import json
-import psutil
-import shutil
-import threading
-from pathlib import Path
+import yaml
 from signal import signal, SIGINT
-from datetime import datetime, timedelta
-from datetime import time as t
+from picamera2 import Picamera2
 
-import rospy
-import rospkg
-import rostopic
+
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import SensorDataQoS
+from ament_index_python.packages import get_package_share_directory
+
+
 import tf2_ros
-from antobot_camera_msgs.srv import cameraRecord, cameraRecordResponse
+from antobot_camera_msgs.srv import CameraRecord
 from sensor_msgs.msg import NavSatFix   
 
 from antobot_devices_camera.rpi_insight_camera import RPiInsightCamera
 
 
-def is_master_running():
-    """
-    Function to check the connection with ROS Master. Runs every 10s.
-    """
 
-    while True:
-        time.sleep(10)
-        try:
-            rostopic.get_topic_class('/rosout')
-        except rostopic.ROSTopicIOException as e:
-            rospy.loginfo(f"SW4102 cameraRecord: Lost connection with ROS Master")
-            print(
-                "Kill the current process, if you use your own laptop, please rerun the code. (For carrier board, service will be restarted automatically.)")
-            os._exit(1)
-
-
-class camRecord:
+class CameraRecord(Node):
     def __init__(self, argv=None):
         """
         Initialises a new cameraRecord class object.
@@ -61,20 +57,99 @@ class camRecord:
             argv (sys.argv): system arguments
 
         """
+        super().__init__('camera_record')
 
+        self.json_dict = None
         self.save_path = os.path.join(os.path.dirname(os.getcwd()), 'saved_recordings')
+        
+        # Read config
+        try:
+            share_dir = get_package_share_directory('antobot_devices_camera')
+            with open(os.path.join(share_dir, 'config', 'platform_config.yaml'), 'r') as file:
+                params = yaml.safe_load(file)
+
+            params_camera = params.get('camera', {})
+            params_gps = params.get('gps', {})
+
+        except Exception as e:
+            print(f"Failed to read robot config file, error: {e}")
+            raise
+
+        avaiable_cams = self.get_connected_camera_info()
+        print(f"Avaiable Cameras: {avaiable_cams}")
 
         # Create and setup camera
-        cam_position = 'left' 
-        self.cam = RPiInsightCamera(preview=False, raw=False, framerate=50)
-        self.cam_name = f'RP_{cam_position}'
-        self.srv_name = f'/antobot_devices_camera/RP/recording/{cam_position}'
+        try:
+            if params_camera:
+                for cam_type in params_camera:
+                    mode = params_camera[cam_type]["mode"]
+                    cam_position = params_camera[cam_type]["location"]
+
+                    self.cam_name = f'RP_{cam_position}'
+                    self.srv_name = f"/antobot_devices_camera/{cam_type}/{mode}/{cam_position}"
+                    
+                    if "dual" in params_camera[cam_type] and params_camera[cam_type]["dual"] is True:
+                        # make 2 cameras
+                        self.cams = [
+                            RPiInsightCamera(preview=True, raw=False, framerate=50, cam=avaiable_cams[0]),
+                            RPiInsightCamera(preview=True, raw=False, framerate=50, cam=avaiable_cams[1])
+                        ]
+
+                    else:
+                        #make one camera
+                        self.cams = [
+                            RPiInsightCamera(preview=True, raw=False, framerate=50, cam=avaiable_cams[0])
+                            , 
+                        ]
+
+                    # only supporting one camera
+                    break
+        except KeyError as e:
+            print(f"KeyError in camera setup. Is platform_config.yaml properly defined? Error: {e}")
+            raise
+        except Exception as e:
+            print(f"Failed to setup camera(s). Error: {e}")
+            raise
+
+        # Setup GPS logging
+        self.use_gps = False 
+        try:
+            if params_gps:
+                self.use_gps = True
+            
+                if "urcu" in params_gps:
+                    self.robot_gps_sub = self.create_subscription(
+                        NavSatFix, "/antobot_urcu", self.gps_callback,QoSProfile=SensorDataQoS()) 
+                elif "f9p_usb" in params_gps:
+                    self.robot_gps_sub = self.create_subscription(
+                        NavSatFix, "/antobot_f9p_usb", self.gps_callback,QoSProfile=SensorDataQoS()) 
+                else:
+                    # There is a gps key but no key for the platform type. 
+                    raise ValueError("platform_config.yaml has a GPS key but there is no key for the platform type.")
+        except KeyError as e:
+            print(f"KeyError in GPS logging setup. Is platform_config.yaml properly defined? Error: {e}")
+            raise
+        except Exception as e:
+            print(f"Failed to setup GPS logging. Error: {e}")
+            raise
+        finally:
+            self.gps = []
 
         # Create and set up stream
         self.enable_stream = True
         if self.enable_stream:
             from preview_streamer import PreviewStreamer
-            self.streamer = PreviewStreamer(self.cam.stream_track)
+            if len(self.cams) >= 2:
+                track_dict = {
+                    "cam1": self.cams[0].stream_track,
+                    "cam2": self.cams[1].stream_track
+                }
+            else:
+                track_dict = {
+                    "cam1": self.cams[0].stream_track,
+                    "cam2": None
+                }
+            self.streamer = PreviewStreamer(track_dict)
         else:
             self.streamer = None
        
@@ -85,32 +160,22 @@ class camRecord:
         self.tfBuffer = None
         self.listener = None
 
-        rospy.init_node(self.cam_name, anonymous=False)
-        self.srvcameraRecord = rospy.Service(self.srv_name, cameraRecord, self._serviceCallbackcameraRecord)
-        self.json_dict = self.init_metadata()
-        
-        self.master_check_thread = threading.Thread(target=is_master_running)
-        self.master_check_thread.start()
 
-        self.use_gps = False
-        if self.use_gps:
-            self.robot_gps_sub = rospy.Subscriber("/am_gps_urcu", NavSatFix, self.gps_callback)
-        self.gps = []
+        self.srvcameraRecord = self.create_service(CameraRecord, self.srv_name, self._service_callback_camera_record)
+        self.json_dict = self.init_metadata()
 
         signal(SIGINT, self.signal_handler)  # Allow interrupt from keyboard (CTRL + C).
 
-        # rospy.spin()
-
     
-    def manage_disk_space(self):
-        # check disk usage
-        disk_free_space = psutil.disk_usage('/').free / (1024 ** 3)
-        print(f"free space: {disk_free_space}G")
-        while disk_free_space < 24:  # if disk usage is < 1GB, clean backup directory
-            self.free_space()
-            disk_free_space = psutil.disk_usage('/').free / (1024 ** 3)
+    def get_connected_camera_info(self):
+        """
+        Detect available cameras and return their sensor name and camera number.
 
-        # TODO: this function doesn't work if backup is already empty....
+        Returns:
+            list of dicts: [{'num': 0, 'model': 'imx296'}, ...]
+        """
+        cameras = Picamera2.global_camera_info()
+        return [{'num': i, 'model': cam.get('Model', 'Unknown').lower()} for i, cam in enumerate(cameras)]
 
 
     def init_metadata(self):
@@ -127,7 +192,7 @@ class camRecord:
 
         # Time
         time_sync = {
-            'rospy_now': rospy.Time.now().to_nsec(),
+            'rospy_now': self.get_clock().now().nanoseconds,
             'monotonic_now': time.monotonic_ns()
         }
         # Initialise a dictionary to convert ros msg to json file
@@ -142,7 +207,7 @@ class camRecord:
         return json_dict
     
 
-    def _serviceCallbackcameraRecord(self, request):
+    def _service_callback_camera_record(self, request, response):
         """
         Callback function to handle the service request from cam manager.
 
@@ -150,11 +215,10 @@ class camRecord:
             request (cameraRecordRequest): command (int8)   0 - open cam, 1 - close cam,
                                                        2 - start recording, 3 - stop recording
         Returns:
-            return_msg (cameraRecordResponse): responseCode (bool)
-                                          responseString (string)
+            response (cameraRecordResponse): response_code (bool)
+                                          response_string (string)
 
         """
-        return_msg = cameraRecordResponse()
 
         # -------------------
         #     OPEN CAMERA
@@ -163,11 +227,11 @@ class camRecord:
             success = self.open_camera()
 
             if success:
-                return_msg.responseCode = True
-                return_msg.responseString = f"{self.cam_name} is open."
+                response.response_code = True
+                response.response_string = f"{self.cam_name} is open."
             else:
-                return_msg.responseCode = False
-                return_msg.responseString = f"Cannot open {self.cam_name}."
+                response.response_code = False
+                response.response_string = f"Cannot open {self.cam_name}."
         
         # --------------------
         #     CLOSE CAMERA
@@ -176,11 +240,11 @@ class camRecord:
             success = self.close_camera()
 
             if success:
-                return_msg.responseCode = True
-                return_msg.responseString = f"{self.cam_name} has been closed."
+                response.response_code = True
+                response.response_string = f"{self.cam_name} has been closed."
             else:
-                return_msg.responseCode = False
-                return_msg.responseString = f"Cannot close {self.cam_name}."
+                response.response_code = False
+                response.response_string = f"Cannot close {self.cam_name}."
 
         # -----------------------
         #     START RECORDING
@@ -188,24 +252,21 @@ class camRecord:
         elif request.command == 2:
 
             # update recording directory if the raspberry pi is not master device
-            rec_path = request.recordingBasename
-            name_start = rec_path.find('AntoManager')
-            username = os.getlogin()
-            pkg_path = rospkg.RosPack().get_path('antobot_manager_msgs')
-            # Go up two directories
-            package_root = os.path.abspath(os.path.join(pkg_path, '..', '..'))
-
-            self.output_basename = os.path.join(package_root, rec_path[name_start:])
-            rospy.loginfo(self.output_basename)
+            rec_path = request.recording_basename
+            USERNAME = os.environ.get("USER")
+            if not USERNAME:
+                USERNAME = "cart"
+            self.output_basename = os.path.join("/home", USERNAME, rec_path.lstrip("/"))
+            self.get_logger().info(self.output_basename)
 
             success = self.start_recording()
 
             if success:
-                return_msg.responseCode = True
-                return_msg.responseString = f"{self.cam_name} recording started, use Ctrl-C or send command to stop."
+                response.response_code = True
+                response.response_string = f"{self.cam_name} recording started, use Ctrl-C or send command to stop."
             else:
-                return_msg.responseCode = False
-                return_msg.responseString = f"{self.cam_name} failed to start recording."
+                response.response_code = False
+                response.response_string = f"{self.cam_name} failed to start recording."
         
         # ----------------------
         #     STOP RECORDING
@@ -214,40 +275,38 @@ class camRecord:
             success = self.stop_recording()
 
             if success:
-                return_msg.responseCode = True
-                return_msg.responseString = f"{self.cam_name} recording stopped."
+                response.response_code = True
+                response.response_string = f"{self.cam_name} recording stopped."
             else:
-                return_msg.responseCode = False
-                return_msg.responseString = f"{self.cam_name} failed to stop recording."
+                response.response_code = False
+                response.response_string = f"{self.cam_name} failed to stop recording."
         
 
-        rospy.loginfo(f'SW4102: cameraRecord: Camera Request Command: {request.command}')
-        rospy.loginfo(f'SW4102: cameraRecord: Camera Response : {return_msg.responseString}')
+        self.get_logger().info(f'SW4102: cameraRecord: Camera Request Command: {request.command}')
+        self.get_logger().info(f'SW4102: cameraRecord: Camera Response : {response.response_string}')
 
-        return return_msg
+        return response
+
 
     def open_camera(self):
         """
-        Opens the camera and displays preview if initialised.
+        Opens all cameras and displays preview if initialised.
 
         Returns:
             success (bool) : True if camera is open, False if it didn't open
 
         """
+        # For each camera, if not already opened, try to open.
+        for cam in self.cams:
+            if not cam.is_open():
+                cam.open_camera()
 
-        # If the camera is already opened, return straight away
-        if self.cam.is_open():
-            return True
-
-        # Try to open camera
-        self.cam.open_camera()
-
-        # Check the camera opened, if not return False
-        if self.cam.is_open():
+        # Check all cameras are opened, if not return False
+        if self.is_every_cam_open():
             return True
         else:
             return False
-        
+                
 
     def close_camera(self):
         """
@@ -256,22 +315,20 @@ class camRecord:
         Returns:
             success (bool) : True if camera is closed, False if it didn't close
         """
+        # For each camera, stop recording and close camera.
+        for cam in self.cams:
+            if cam.is_recording():
+                cam.stop_recording()
 
+            if cam.is_open():
+                cam.close_camera()
 
-        if not self.cam.is_open():
-            return True
-        
-         # If recording hasn't been stopped, stop it first
-        if self.is_cam_recording(): 
-            self.stop_recording()
-
-        if self.cam.is_open():
-            self.cam.close_camera()
-
-        if not self.cam.is_open():
-            return True
-        else:
+        # Check no cameras are open, if so return False        
+        if self.is_any_cam_open():
             return False
+        else:
+            return True
+
 
     def start_recording(self):
         """
@@ -281,29 +338,28 @@ class camRecord:
             success (bool): True if recording is started, False if recording failed to start
         """
         
-        # check if camera is opened, if not, open camera first
-        if not self.cam.is_open():
-            success = self.open_camera()
-            if not success:
-                return False
-
-        # if the camera is already recording, return straight away
-        if self.is_cam_recording():
+        # if the cameras are already recording, return straight away
+        if self.is_every_cam_recording():
             return True
+        
+        # check if cameras are opened, if not, open cameras first
+        if not self.is_every_cam_open():
+            if not self.open_camera():
+                # if cameras fail to open, return False
+                return False
 
         # clear dict
         self.json_dict = self.init_metadata()
 
         if self.use_gps:
-            self.json_dict['origin']['latitude'] = rospy.get_param('/GPS_origin/latitude')
-            self.json_dict['origin']['longitude'] = rospy.get_param('/GPS_origin/longitude')
             self.json_dict['gps'] = []
 
         # Setup and start encoders
-        self.cam.start_recording(self.output_basename)
+        for cam in self.cams:
+            cam.start_recording(self.output_basename)
 
         # Check recording has started
-        if self.is_cam_recording():
+        if self.is_every_cam_recording():
             return True
         else:
             return False
@@ -318,31 +374,84 @@ class camRecord:
         """
         
         # if the camera is already stopped, return straight away
-        if not self.is_cam_recording():
+        if not self.is_any_cam_recording():
             return True
         
-        # if recording hasn't been stopped, stop it
-        if self.is_cam_recording():
-            
-            # Stop recording and store camera per frame metadata
-            self.json_dict['cam_metadata'] = self.cam.stop_recording()          
-            self.write_metadata()
+        # Stop recording and store camera per frame metadata
+        for cam in self.cams:
+            md = cam.stop_recording()
+            self.json_dict['cam_metadata'] = md
+            self.write_metadata(cam.cam_num)
 
         # Check recording has stopped
-        if not self.is_cam_recording():
+        if not self.is_any_cam_recording():
             return True
         else:
             return False
 
 
-    def is_cam_recording(self):
+    def is_every_cam_recording(self):
         """
-        Returns True if the camera is recording, otherwise False.
+        Returns True if every camera is recording, otherwise False.
 
         Returns:
-            out (bool): True if camera is recording
+            out (bool): True if every camera is recording. False if one or more isn't.
         """
-        return self.cam.is_recording()
+        for cam in self.cams:
+            if not cam.is_recording():
+                # if any cam ISN'T recording, return false
+                return False
+        
+        # if we get to here, all cameras are recording
+        return True
+    
+
+    def is_any_cam_recording(self):
+        """
+        Returns True if any of the cameras is recording, otherwise False.
+
+        Returns:
+            out (bool): True if one or more camera is recording. False if none are recording.
+        """
+        for cam in self.cams:
+            if cam.is_recording():
+                # if any of the cameras is recording, return True
+                return True
+        
+        # if we get to here, no camera is recording
+        return False
+    
+
+    def is_every_cam_open(self):
+        """
+        Returns True if every camera is open, otherwise False.
+
+        Returns:
+            out (bool): True if every camera is open. False if one or more isn't.
+        """
+        for cam in self.cams:
+            if not cam.is_open():
+                # if any cam ISN'T open, return false
+                return False
+        
+        # if we get to here, all cameras are open
+        return True
+    
+
+    def is_any_cam_open(self):
+        """
+        Returns True if any of the cameras is open, otherwise False.
+
+        Returns:
+            out (bool): True if one or more camera is open. False if none are open.
+        """
+        for cam in self.cams:
+            if cam.is_open():
+                # if any of the cameras is open, return True
+                return True
+        
+        # if we get to here, no camera is open
+        return False
 
 
     def signal_handler(self, signal_received, frame):
@@ -357,12 +466,13 @@ class camRecord:
         self.close_camera()
         exit(0)
 
+
     def gps_callback(self, msg):
         
-        if self.rec_gps:
+        if self.use_gps and self.json_dict:
             # Put data from message into dictionary
             entry = {
-                'time': msg.header.stamp.to_nsec(),
+                'time':(msg.header.stamp.sec * 1e9) + msg.header.stamp.nanosec,
                 'lat': msg.latitude,
                 'lon': msg.longitude,
                 'alt': msg.altitude
@@ -371,59 +481,34 @@ class camRecord:
             # Write to metadata dict
             self.json_dict['gps'].append(entry)
 
-    def write_metadata(self):
+
+    def write_metadata(self, num):
         """
         Dump metadata for one recording to a json file.
 
         """
-        filename = f"{self.output_basename}.json"
+        filename = f"{self.output_basename}_{num}.json"
 
         try:
             with open(filename, "w") as f:
                 json.dump(self.json_dict, f)  # writes the camera pose as a json file
-        except rospy.ROSInterruptException:
-            pass
-
-  
-    def free_space(self):
-        try:
-            # Ensure the directory exists
-            backup_path = os.path.join(self.save_path, 'backup')
-            if not os.path.exists(backup_path):
-                print(f"Directory '{backup_path}' does not exist.")
-                return
-
-            # List all files in the directory
-            files = os.listdir(backup_path)
-            files.sort()
-
-            # Delete each file in the directory
-            if len(files):
-                file_path = os.path.join(backup_path, files[-1])
-                shutil.rmtree(file_path)
-                rospy.loginfo(f"SW4102: cameraRecord: Deleted file: {file_path}")
         except Exception as e:
-            rospy.loginfo(f"SW4102: cameraRecord: Deleted file failed: {str(e)}")
+            print(f"Failed to write metadata to json file {filename}, error: {e}")
+            pass
 
 
 def main():
-    try:
-        rospy.loginfo(f"SW4100: cameraRecord Node launched")
-        avRec = camRecord()
-   
-        if avRec.enable_stream:
-            # if streaming, use aiohttp event loop
-            avRec.streamer.run()
-        else:
-            # else, keep alive with rospy.spin
-            rospy.spin()
-    
-    except Exception as e:
-        print(e)
-        rospy.loginfo(f"SW4101: cameraRecord Node died: {e}")
+    rclpy.init()
 
+    try:
+        camera_record_node = CameraRecord()
+        rclpy.spin(camera_record_node)
+    except Exception as e:
+        print(f"Camera record node died: {e}")
+    finally:
+        camera_record_node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == "__main__":
     main()
-    

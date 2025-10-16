@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright (c) 2023, ANTOBOT LTD.
+# Copyright (c) 2025, ANTOBOT LTD.
 # All rights reserved.
 #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -13,55 +13,52 @@
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
 
-import rospy
-import rosservice
-from antobot_camera_msgs.srv import cameraRecord, cameraRecordResponse
+import rclpy
+from rclpy.node import Node
+from antobot_camera_msgs.srv import CameraRecord
 
 
-class cameraRecordClient():
+class CameraRecordClient(Node):
     """A class that handles a client to provide updates to higher level nodes"""
 
-    def __init__(self, command, recording_basename, serviceName):
-
+    def __init__(self, serviceName):
+        super().__init__('camera_record_client')
+        self.cli = self.create_client(CameraRecord, serviceName)
         self.serviceName = serviceName
 
-        self.cameraRecordClient = rospy.ServiceProxy(self.serviceName, cameraRecord)
-        self.command = command
-        self.recording_basename = recording_basename
+    def check_service(self, wait=0.5):
 
-    def checkForService(self):
-        service_list = rosservice.get_service_list()
-        if self.serviceName in service_list:
-            return True
-        else:
+        if not self.cli.wait_for_service(timeout_sec=wait):
+            self.get_logger().info(f'service {self.serviceName} not available')
             return False
+        return True
 
-    def sendCameraCommand(self):
 
-        # In ROS it's common to wait for a service. However, this blocks execution and is not always useful. Use checkForService method instead.
-        # rospy.wait_for_service('localUserInput')
-        # camCommand = camManagerRequest
-        # camCommand.camera_num=self.camera_num
-        # camCommand.command=self.command
+    def sendCameraCommand(self, command, recording_basename):
+
+        if not self.check_service():
+            return None
+
+        req = CameraRecord.Request()
+        req.command = command
+        req.recording_basename = recording_basename
+
+        fut = self.cli.call_async(req)
+        rclpy.spin_until_future_complete(self, fut)
 
         try:
-            response = self.cameraRecordClient(self.command, self.recording_basename)
-            return response
+            fut.result()
+            return fut.result()
+        except Exception as e:
+            self.get_logger().info(f'Service call failed {e}')
+            return None
+        
 
-        except rospy.ServiceException as e:
-            print("Service call failed: %s" % e)
+def main():
+    # Create the class to handle client-side interaction
+    cameraRecordClient = CameraRecordClient(serviceName='/antobot_devices_camera/rpi/record/left')
+    camManagerResponse = cameraRecordClient.sendCameraCommand(command=1, recording_basename='test')
 
 
 if __name__ == "__main__":
-
-    # Create the class to handle client-side interaction
-    cameraRecordClient = cameraRecordClient(command=2, recording_basename='2024_06_28_14_16_00', serviceName='/antobot/camera_record/left')
-
-    # Check that the service is availble before trying to send requests
-    serviceState = cameraRecordClient.checkForService()
-
-    if serviceState:  # If the service is available
-        camManagerResponse = cameraRecordClient.sendCameraCommand()
-    else:
-        print('Unable to make request')
-        print('ROS service ' + cameraRecordClient.serviceName + ' is not available')
+    main()
