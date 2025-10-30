@@ -16,7 +16,8 @@ find_package(rosidl_default_generators REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/CameraRecord.srv"
   "srv/CamManager.srv"
-  DEPENDENCIES std_msgs builtin_interfaces
+  "action/Record.action"
+  DEPENDENCIES std_msgs builtin_interfaces action_msgs
 )
 
 if(BUILD_TESTING)
@@ -31,4 +32,5 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
+ament_export_dependencies(rosidl_default_runtime)
 ament_package()
