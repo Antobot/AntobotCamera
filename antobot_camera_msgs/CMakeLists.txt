@@ -16,7 +16,7 @@ find_package(rosidl_default_generators REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/CameraRecord.srv"
   "srv/CamManager.srv"
-  "action/Record.action"
+  # "action/Record.action"
   DEPENDENCIES std_msgs builtin_interfaces action_msgs
 )
 
