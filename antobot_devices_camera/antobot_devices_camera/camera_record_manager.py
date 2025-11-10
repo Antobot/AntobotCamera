@@ -1,6 +1,7 @@
 import os
 import json
 import yaml
+import datetime
 from typing import Dict, List
 from threading import Lock
 
@@ -12,6 +13,8 @@ from std_msgs.msg import Bool
 from sensor_msgs.msg import NavSatFix
 
 from antobot_camera_msgs.srv import CameraRecord as CameraRecordSrv
+from antobot_devices_camera.realsense_camera import CameraDriver
+from acCamera.antobot_devices_camera.antobot_devices_camera.recorder import Recorder
 
 
 # camera_num: 3=left, 4=right, 0=both
@@ -20,16 +23,16 @@ NUM_TO_LOC = {3: "left", 4: "right"}
 class CameraRecordManager(Node):
     def __init__(self):
         super().__init__('camera_record_manager')
-        self.declare_parameter('config_path', '')
+        self.declare_parameter('config_path', '/root/ros2_ws/src/acCamera/antobot_devices_camera/config/scouting_config.yaml')
         self.cfg = self._load_cfg()
+
+        self.recorders: Dict[str, Recorder] = {}
         
         # Callback groups for threading
         self.service_cb_group = ReentrantCallbackGroup()
-        self.client_cb_group = ReentrantCallbackGroup()
 
         # Camera driver clients (cached)
-        self.drivers: Dict[str, rclpy.client.Client] = {}
-        self.driver_services: Dict[str, str] = {}
+        self.cam_drivers: Dict[str, CameraDriver] = {}
         
         # Scout light publishers
         self.light_pubs: Dict[str, rclpy.publisher.Publisher] = {}
@@ -59,8 +62,6 @@ class CameraRecordManager(Node):
             callback_group=self.service_cb_group
         )
 
-        self.get_logger().info(f"Manager ready. Services: {self.driver_services}")
-
 
     def _load_cfg(self):
         path = self.get_parameter('config_path').get_parameter_value().string_value
@@ -76,17 +77,8 @@ class CameraRecordManager(Node):
             if loc not in ['left', 'right']:
                 self.get_logger().warn(f'Ignoring unknown camera side: {loc}')
                 continue
-            
-            service_name = f'/antobot_devices_camera/camera_record/{loc}' 
-            
-            self.driver_services[loc] = service_name
-            self.drivers[loc] = self.create_client(
-                CameraRecordSrv,
-                service_name,
-                callback_group=self.client_cb_group
-            )
-            
-            self.get_logger().info(f'  {loc.capitalize()} camera driver: {service_name}')
+            port = cameras[loc].get('port_core', None)
+            self.cam_drivers[loc] = CameraDriver(port=port)
 
     def _setup_scout_lights(self):
         """Create publishers for scout light control."""
@@ -96,7 +88,7 @@ class CameraRecordManager(Node):
             light_topic = config.get('light_topic')
             if light_topic:
                 self.light_pubs[loc] = self.create_publisher(Bool, light_topic, 1)
-                self.get_logger().info(f'  {loc.capitalize()} scout light: {light_topic}')
+                self.get_logger().info(f'{loc.capitalize()} scout light: {light_topic}')
 
     def _setup_gps_logging(self):
         """Subscribe to GPS topic if configured."""
@@ -105,7 +97,7 @@ class CameraRecordManager(Node):
             self.create_subscription(
                 NavSatFix,
                 gps_topic,
-                self._handle_gps_message,
+                self._gps_cb,
                 qos_profile=qos_profile_sensor_data
             )
             self.get_logger().info(f'  GPS logging: {gps_topic}')
@@ -119,33 +111,6 @@ class CameraRecordManager(Node):
         msg.data = bool(on)
         pub.publish(msg)
 
-    # ---- Driver call ----
-    def _call_driver(self, loc: str, req: CameraRecordSrv.Request, timeout=5.0):
-        client = self.drivers.get(loc)
-        
-        if not client:
-            return False, f"No driver configured for '{loc}'."
-        
-        self.get_logger().info(f"Calling driver for '{loc}' on {self.driver_services[loc]} with command={req.command}")
-        
-        # Check if service is available
-        if not client.wait_for_service(timeout_sec=2.0):
-            return False, f"Driver service not available: {self.driver_services[loc]}"
-        
-        # Call async
-        future = client.call_async(req)
-        
-        # Wait for result
-        rclpy.spin_until_future_complete(self, future, timeout_sec=timeout)
-        
-        if not future.done():
-            return False, "Driver call timed out"
-        
-        try:
-            resp = future.result()
-            return bool(resp.response_code), resp.response_string
-        except Exception as e:
-            return False, f"Driver call error: {e}"
 
     # ---- Public service callback ----
     def _srv_cb(self, req, resp):
@@ -163,44 +128,74 @@ class CameraRecordManager(Node):
                 return resp
             targets = [loc]
 
-        # If starting recording, ensure basename provided
-        if cmd == 2 and not req.recording_basename:
-            resp.response_code = False
-            resp.response_string = "recording_basename required for start recording."
-            return resp
-
-        # When starting, convert to absolute path once
-        abs_basename = None
-        if cmd == 2 and req.recording_basename:
-            username = os.environ.get("USER", "root")
-            abs_basename = os.path.join("/home", username, req.recording_basename.lstrip("/"))
-            req.recording_basename = abs_basename
+        rec_path = self.cfg.get('recording_path', '/root/ros2_ws/data/')
+        
+        # Generate absolute basename for recordings
+        now = datetime.datetime.now() # local time
+        date_folder = now.strftime("%Y%m%d")
+        os.makedirs(os.path.join(rec_path, date_folder), exist_ok=True)
+        time_str = now.strftime("%H%M%S")
+        abs_basename = os.path.join(rec_path, date_folder, f"{time_str}")
 
         self.get_logger().info(f"CameraRecordManager: cmd={cmd}, cam_num={cam_num}, targets={targets}")
         
-        # Start GPS logging once before calling drivers (if recording)
+        results = []
+        # Start recording on each target
         if cmd == 2 and abs_basename:
             self._start_gps_logging(abs_basename)
         
-        # Fan-out to targets
-        results = []
-        for loc in targets:
-            ok, msg = self._call_driver(loc, req)
-            results.append((loc, ok, msg))
+            for loc in targets:
+                if self.recording_active[loc]:
+                    ok = True
+                    msg = "Already recording."
+                    results.append((loc, ok, msg))
+                    continue
+                try:
+                    cam = self.cam_drivers.get(loc)
+                    self.get_logger().info(f"Start camera {loc}")
+                    self.recorders[loc] = Recorder(
+                        camera_driver=cam,
+                        out_basename=abs_basename+f"_{loc[0]}")
+                    self.recorders[loc].start()
+                    ok = True
+                    msg = f"Recording started"
+                    self.get_logger().info(f"{loc.capitalize()} camera recording started.")
+                except Exception as e:
+                    self.recorders[loc] = None
+                    ok = False
+                    msg = f"Failed to start: {e}"
 
-            # Light policy per-side
-            if ok and cmd == 2:  # start
-                with self.recording_lock:
-                    self.recording_active[loc] = True
-                self._set_light(loc, True)
-                
-            if ok and cmd == 3:  # stop
-                with self.recording_lock:
-                    self.recording_active[loc] = False
-                self._set_light(loc, False)
+                results.append((loc, ok, msg))
+
+                # Light policy per-side
+                if ok:  # start
+                    with self.recording_lock:
+                        self.recording_active[loc] = True
+                    self._set_light(loc, True)
+        
+        # Stop recording on each target
+        elif cmd == 3:
+            for loc in targets:
+                if self.recording_active[loc] == False:
+                    ok = True
+                    msg = "Not recording."
+                    results.append((loc, ok, msg))
+                    continue
+                try:
+                    self.get_logger().info(f"Stop camera {loc}")
+                    written = self.recorders[loc].stop()
+                    ok = True
+                    msg = f"Stopped. Frames={written}"
+                    self.get_logger().info(f"{loc.capitalize()} camera recording stopped.")
+                finally:
+                    self.recorders[loc] = None
+                if ok:  # stop
+                    with self.recording_lock:
+                        self.recording_active[loc] = False
+                    self._set_light(loc, False)
+                results.append((loc, ok, msg))
 
         # Stop GPS only if both cameras have stopped
-        if cmd == 3:
             with self.recording_lock:
                 still_recording = any(self.recording_active.values())
             if not still_recording:

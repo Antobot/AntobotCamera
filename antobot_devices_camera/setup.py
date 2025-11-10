@@ -24,8 +24,6 @@ setup(
     entry_points={
         'console_scripts': [
             'camera_record_manager = antobot_devices_camera.camera_record_manager:main',
-            'mock_camera_driver   = antobot_devices_camera.mock_camera_driver:main',
-            'mock_gps_pub         = antobot_devices_camera.mock_gps_pub:main',
         ],
     },
 )
