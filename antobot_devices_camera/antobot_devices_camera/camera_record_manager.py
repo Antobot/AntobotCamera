@@ -14,7 +14,7 @@ from sensor_msgs.msg import NavSatFix
 
 from antobot_camera_msgs.srv import CameraRecord as CameraRecordSrv
 from antobot_devices_camera.realsense_camera import CameraDriver
-from acCamera.antobot_devices_camera.antobot_devices_camera.recorder import Recorder
+from antobot_devices_camera.recorder import Recorder
 
 
 # camera_num: 3=left, 4=right, 0=both
