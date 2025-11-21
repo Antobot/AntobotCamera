@@ -14,7 +14,7 @@ from sensor_msgs.msg import NavSatFix
 
 from antobot_camera_msgs.srv import CameraRecord as CameraRecordSrv
 from antobot_devices_camera.realsense_camera import CameraDriver
-from antobot_devices_camera.recorder import Recorder
+from antobot_devices_camera.recorder_mkv import Recorder
 
 
 # camera_num: 3=left, 4=right, 0=both
@@ -23,7 +23,7 @@ NUM_TO_LOC = {3: "left", 4: "right"}
 class CameraRecordManager(Node):
     def __init__(self):
         super().__init__('camera_record_manager')
-        self.declare_parameter('config_path', '/root/ros2_ws/src/acCamera/antobot_devices_camera/config/scouting_config.yaml')
+        self.declare_parameter('config_path', '/home/scouting/ros2_ws/src/acCamera/antobot_devices_camera/config/scouting_config.yaml')
         self.cfg = self._load_cfg()
 
         self.recorders: Dict[str, Recorder] = {}
@@ -77,8 +77,14 @@ class CameraRecordManager(Node):
             if loc not in ['left', 'right']:
                 self.get_logger().warn(f'Ignoring unknown camera side: {loc}')
                 continue
+            # RETRIEVE PARAMS
+            params = cameras[loc]['params']
+            
+            fps = params['framerate']
+            width = params.get('width', 1280)
+            height = params.get('height', 720)  
             port = cameras[loc].get('port_core', None)
-            self.cam_drivers[loc] = CameraDriver(port=port)
+            self.cam_drivers[loc] = CameraDriver(port=port, width=width, height=height, fps=fps)
 
     def _setup_scout_lights(self):
         """Create publishers for scout light control."""
@@ -152,10 +158,20 @@ class CameraRecordManager(Node):
                     continue
                 try:
                     cam = self.cam_drivers.get(loc)
+
+                    params = self.cfg['camera'][loc]['params']
+                    fps = params.get('framerate', 30)
+                    width = params.get('width', 1280)
+                    height = params.get('height', 720)  
+
                     self.get_logger().info(f"Start camera {loc}")
                     self.recorders[loc] = Recorder(
                         camera_driver=cam,
-                        out_basename=abs_basename+f"_{loc[0]}")
+                        out_basename=abs_basename+f"_{loc[0]}",
+                        width=width,
+                        height=height,
+                        fps=fps)
+                    
                     self.recorders[loc].start()
                     ok = True
                     msg = f"Recording started"

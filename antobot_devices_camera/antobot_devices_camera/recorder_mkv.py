@@ -13,7 +13,7 @@ class RgbdMkvWriter:
       - Depth: ffv1, gray16le (lossless)
     """
     def __init__(self, path, width, height, fps,
-                 rgb_codec="libx264", depth_codec="ffv1",
+                 rgb_codec="h264_nvmpi", depth_codec="ffv1",
                  x264_preset="veryfast", x264_crf=18):
         self.path = path
         self.width = width
@@ -47,10 +47,16 @@ class RgbdMkvWriter:
         self.rgb_stream.height = self.height
         self.rgb_stream.pix_fmt = "yuv420p"
         # Encoder tuning
+        # Jetson nvmpi encoder (jetson-ffmpeg)
+        self.rgb_stream.bit_rate = 8_000_000  # 8 Mbps; tune as needed
+        # These map roughly to typical ffmpeg CLI usage:
+        #   -c:v h264_nvmpi -preset medium -rc vbr -b:v 8M -maxrate 8M -bufsize 16M -g 30
         self.rgb_stream.options = {
-            "preset": self.x264_preset,
-            "crf": str(self.x264_crf),
-            "tune": "zerolatency"
+            "preset": "medium",      # or "fast", "slow" depending on what your build supports
+            "rc": "vbr",             # rate control: vbr or cbr
+            "maxrate": "8000000",    # match bit_rate
+            "bufsize": "16000000",   # 2x bit_rate is a common starting point
+            "g": "30",               # GOP size (keyframe every 30 frames at 30 FPS = 1s)
         }
 
         # Depth stream (FFV1 lossless)
@@ -106,9 +112,8 @@ class RgbdMkvWriter:
 
 class Recorder:
     """
-    Pull frames from a CameraDriver, and write either:
-      - MKV (RGB+Depth) with RgbdMkvWriter  [container='mkv']
-      - or Depth H5 + RGB MP4               [container='h5+mp4']
+    Pull frames from a CameraDriver, and write:
+      - MKV (RGB+Depth) with RgbdMkvWriter 
     """
     def __init__(
         self,
@@ -119,7 +124,7 @@ class Recorder:
         height: int = 720,
         fps: int = 30,
         frames: int = 0,                     # 0 = unlimited
-        container: str = "mkv"               # 'mkv' or 'h5+mp4'
+        container: str = "mkv"               
     ):
         self.cam = camera_driver
         self.out_base = os.path.splitext(out_basename)[0]
@@ -143,32 +148,38 @@ class Recorder:
         return self._frames_written
 
     def _writer_loop(self):
-        # Pre-open MKV with metadata from camera
-        self.mkv_writer.open(
-            depth_scale=self.cam.depth_scale,
-            color_intrinsics=self.cam.color_intrinsics,
-            aligned=True
-        )
-
         try:
-            while not self._stop.is_set():
-                try:
-                    item = self._frame_queue.get(timeout=0.2)
-                except queue.Empty:
-                    item = None
+            while True:
 
-                if item is None:
+                try:
+                    item = self._frame_queue.get(timeout=1.0)
+                except queue.Empty:
                     if self._stop.is_set():
                         break
                     continue
 
+                if item is None:
+                    self._frame_queue.task_done()
+                    break 
+
                 color_bgr, depth_u16 = item
 
-                # MKV: encode & mux per-frame, stream metadata already set
-                self.mkv_writer.write(color_bgr, depth_u16)
-                self._frames_written += 1
+                try:
+                    # Catch Disk Full / IO Errors
+                    self.mkv_writer.write(color_bgr, depth_u16)
+                    self._frames_written += 1
+                except Exception as e:
+                    self._error = e
+                    print(f"[Recorder Error] Write failed (Disk full?): {e}")
+                    self._stop.set() # Stop the feeder immediately
+                    self._frame_queue.task_done()
+                    break
 
-                self._frame_queue.task_done()
+        except Exception as e:
+            # Catch anything else unexpected
+            self._error = e
+            print(f"[Recorder Error] Writer crashed unexpectedly: {e}")
+
         finally:
             self.mkv_writer.close()
             print(f"Recorded RGB-D MKV to: {self.mkv_path}")
@@ -179,6 +190,14 @@ class Recorder:
             return
         self.cam.start()
         self._stop.clear()
+
+        # Pre-open MKV with metadata from camera
+        self.mkv_writer.open(
+            depth_scale=self.cam.depth_scale,
+            color_intrinsics=self.cam.color_intrinsics,
+            aligned=True
+        )
+
         self._writer_thread = threading.Thread(target=self._writer_loop, daemon=False)
         self._writer_thread.start()
         self._running = True
@@ -187,35 +206,59 @@ class Recorder:
         self._feeder.start()
 
     def _feeder_loop(self):
-        for color_bgr, depth_u16 in self.cam.frames():
-            if self._stop.is_set():
-                break
-            try:
-                self._frame_queue.put((color_bgr, depth_u16), timeout=0.05)
-            except queue.Full:
-                # drop 1 oldest to keep latency bounded
-                try:
-                    _ = self._frame_queue.get_nowait()
-                    self._frame_queue.task_done()
-                except queue.Empty:
-                    pass
-                try:
-                    self._frame_queue.put_nowait((color_bgr, depth_u16))
-                except queue.Full:
-                    pass
+        try:
+            for color_bgr, depth_u16 in self.cam.frames():
 
-            if self.frames_limit > 0 and self.frames_written >= self.frames_limit:
-                break
-        self._stop.set()
+                if self._stop.is_set():
+                    break
+                
+                try:
+                    self._frame_queue.put((color_bgr, depth_u16), block=False)
+                except queue.Full: # Queue is full. The writer is slow.
+
+                    try:
+                        _ = self._frame_queue.get_nowait() # Remove the oldest frame to make space
+                        self._frame_queue.task_done()
+                    except queue.Empty:
+                        # This happens if the writer cleared a slot at the exact same moment.
+                        # We ignore it because it means we have space now.
+                        pass
+                    
+                    # put the new frame in the space we just made
+                    try:
+                        self._frame_queue.put_nowait((color_bgr, depth_u16))
+                    except queue.Full:
+                        # If it's STILL full (extremely rare race condition), 
+                        # we just drop the current frame to prevent crashing.
+                        pass 
+
+                if self.frames_limit > 0 and self._frames_written >= self.frames_limit:
+                    self._stop.set()
+                    break
+
+        except Exception as e:
+            self._error = e
+            print(f"[Recorder Error] Feeder crashed: {e}")
+            self._stop.set()
+        finally:
+            # Signal the writer to stop
+            self._frame_queue.put(None)
+
 
     def stop(self):
-        if not self._running:
-            return 0
-        self._stop.set()
-        if self._writer_thread:
-            self._writer_thread.join()
-        if self._feeder:
-            self._feeder.join()
-        self.cam.stop()
-        self._running = False
-        return self.frames_written
+            if not self._running:
+                return 0
+
+            self._stop.set()
+
+            if self._feeder:
+                self._feeder.join()
+        
+
+            if self._writer_thread:
+                self._writer_thread.join()
+            
+            self.cam.stop()
+            
+            self._running = False
+            return self.frames_written

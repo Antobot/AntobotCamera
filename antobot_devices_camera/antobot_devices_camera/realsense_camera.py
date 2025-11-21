@@ -2,6 +2,7 @@
 from __future__ import annotations
 import numpy as np
 import pyrealsense2 as rs
+import cv2
 
 class CameraDriver:
     """
@@ -45,33 +46,43 @@ class CameraDriver:
     def start(self):
         if self._running:
             return
-
+        
+        # 1. Find the device
         selected_device = self._select_device_by_port()
         if selected_device is None:
             raise RuntimeError(f"CameraDriver: No RealSense device found at port {self.port}")
-        
+
+        # 2. Increase queue size to tolerate writer bursts
+        try:
+            for s in selected_device.query_sensors():
+                # Set the internal driver queue (default is 16)
+                if s.supports(rs.option.frames_queue_size):
+                    s.set_option(rs.option.frames_queue_size, 32)
+
+            self.align = rs.align(rs.stream.color)
+        except Exception as e:
+            print(f"Warning: Failed to set sensor options: {e}")
+
+        # 3. Get Serial for Config
         serial = selected_device.get_info(rs.camera_info.serial_number)
 
+        # 4. Configure Pipeline
         self.pipeline = rs.pipeline()
         cfg = rs.config()
         cfg.enable_device(serial)
         cfg.enable_stream(rs.stream.color, self.width, self.height, rs.format.rgb8, self.fps)
         cfg.enable_stream(rs.stream.depth, self.width, self.height, rs.format.z16, self.fps)
-        self.profile = self.pipeline.start(cfg)
 
-        device = self.profile.get_device()
-        # Increase queue size to tolerate writer bursts
-        try:
-            for s in device.query_sensors():
-                if s.supports(rs.option.frames_queue_size):
-                    s.set_option(rs.option.frames_queue_size, 16)
+        
+        # 5. Start Pipeline with a large Python buffer
+        self.frame_queue = rs.frame_queue(150, keep_frames=True)
+        self.profile = self.pipeline.start(cfg, self.frame_queue) 
 
-            self.align = rs.align(rs.stream.color)
-        except Exception:
-            pass
+        # 6. Setup Align
+        self.align = rs.align(rs.stream.color)
 
-        # Depth scale
-        self.depth_scale = device.first_depth_sensor().get_depth_scale()
+        # 7. Get Intrinsics / Scale
+        self.depth_scale = selected_device.first_depth_sensor().get_depth_scale()
 
         # Color intrinsics
         cstream = self.profile.get_stream(rs.stream.color).as_video_stream_profile()
@@ -101,15 +112,15 @@ class CameraDriver:
         - depth_u16: (H,W) uint16 (Z16)
         """
         assert self._running, "CameraDriver not started."
-        import cv2
 
         while self._running:
-            fs = self.pipeline.wait_for_frames(timeout_ms)
-            if self.align:
-                fs = self.align.process(fs)
+            fs = self.frame_queue.wait_for_frame(timeout_ms).as_frameset()
 
-            c = fs.get_color_frame()
-            d = fs.get_depth_frame()
+            aligned_frames = self.align.process(fs) 
+
+            c = aligned_frames.get_color_frame()
+            d = aligned_frames.get_depth_frame()
+            
             if not c or not d:
                 continue
 

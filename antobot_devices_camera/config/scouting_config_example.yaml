@@ -13,13 +13,13 @@
 camera:
   left:
     type: realsense
-    port_core: "/usb2/2-3/2-3:1.0"
+    port_core: "/usb2/2-1/2-1.4/2-1.4:1.0"
     params:
       framerate: 30
     light_topic: /antobot_devices_camera/left_scouting_light
   right:
     type: realsense
-    port_core: "/usb2/2-4/2-4:1.0"    
+    port_core: "/usb2/2-1/2-1.3/2-1.3:1.0"    
     params:
       framerate: 30
     light_topic: /antobot_devices_camera/right_scouting_light
@@ -27,4 +27,4 @@ camera:
 gps:
   topic: /antobot_gps
 
-recording_path: /root/ros2_ws/data/
+recording_path: /home/scouting/ros2_ws/data/
