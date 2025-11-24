@@ -17,8 +17,8 @@ from antobot_devices_camera.realsense_camera import CameraDriver
 from antobot_devices_camera.recorder_mkv import Recorder
 
 
-# camera_num: 3=left, 4=right, 0=both
-NUM_TO_LOC = {3: "left", 4: "right"}
+# camera_num: 1=left, 2=right, 0=both
+NUM_TO_LOC = {1: "left", 2: "right"}
 
 class CameraRecordManager(Node):
     def __init__(self):
@@ -118,6 +118,26 @@ class CameraRecordManager(Node):
         pub.publish(msg)
 
 
+    def _generate_session_basename(self) -> str:
+        """
+        Creates the daily directory and returns the absolute basename 
+        based on the current time.
+        Example return: /root/ros2_ws/data/20251124/110500
+        """
+        rec_path = self.cfg.get('recording_path', '/root/ros2_ws/data/')
+        
+        now = datetime.datetime.now()
+        date_folder = now.strftime("%Y%m%d")
+        
+        # Create directory 
+        full_dir = os.path.join(rec_path, date_folder)
+        os.makedirs(full_dir, exist_ok=True)
+        
+        # Generate basename
+        time_str = now.strftime("%H%M%S")
+        return os.path.join(full_dir, time_str)
+
+
     # ---- Public service callback ----
     def _srv_cb(self, req, resp):
         cmd = int(req.command)
@@ -130,92 +150,82 @@ class CameraRecordManager(Node):
             loc = NUM_TO_LOC.get(cam_num)
             if not loc:
                 resp.response_code = False
-                resp.response_string = f"Unsupported camera_num={cam_num}. Use 0 (both), 3 (left), 4 (right)."
+                resp.response_string = f"Unsupported camera_num={cam_num}. Use 0 (both), 1 (left), 2 (right)."
                 return resp
             targets = [loc]
-
-        rec_path = self.cfg.get('recording_path', '/root/ros2_ws/data/')
-        
-        # Generate absolute basename for recordings
-        now = datetime.datetime.now() # local time
-        date_folder = now.strftime("%Y%m%d")
-        os.makedirs(os.path.join(rec_path, date_folder), exist_ok=True)
-        time_str = now.strftime("%H%M%S")
-        abs_basename = os.path.join(rec_path, date_folder, f"{time_str}")
 
         self.get_logger().info(f"CameraRecordManager: cmd={cmd}, cam_num={cam_num}, targets={targets}")
         
         results = []
         # Start recording on each target
-        if cmd == 2 and abs_basename:
+        if cmd == 2:
+            abs_basename = self._generate_session_basename()
             self._start_gps_logging(abs_basename)
         
             for loc in targets:
-                if self.recording_active[loc]:
-                    ok = True
-                    msg = "Already recording."
-                    results.append((loc, ok, msg))
-                    continue
-                try:
-                    cam = self.cam_drivers.get(loc)
+                with self.recording_lock:
+                    if self.recording_active[loc]:
+                        ok = True
+                        msg = "Already recording."
+                        results.append((loc, ok, msg))
+                        continue
+                    try:
+                        cam = self.cam_drivers.get(loc)
 
-                    params = self.cfg['camera'][loc]['params']
-                    fps = params.get('framerate', 30)
-                    width = params.get('width', 1280)
-                    height = params.get('height', 720)  
+                        params = self.cfg['camera'][loc]['params']
+                        fps = params.get('framerate', 30)
+                        width = params.get('width', 1280)
+                        height = params.get('height', 720)  
 
-                    self.get_logger().info(f"Start camera {loc}")
-                    self.recorders[loc] = Recorder(
-                        camera_driver=cam,
-                        out_basename=abs_basename+f"_{loc[0]}",
-                        width=width,
-                        height=height,
-                        fps=fps)
-                    
-                    self.recorders[loc].start()
-                    ok = True
-                    msg = f"Recording started"
-                    self.get_logger().info(f"{loc.capitalize()} camera recording started.")
-                except Exception as e:
-                    self.recorders[loc] = None
-                    ok = False
-                    msg = f"Failed to start: {e}"
+                        self.get_logger().info(f"Start camera {loc}")
+                        self.recorders[loc] = Recorder(
+                            camera_driver=cam,
+                            out_basename=abs_basename+f"_{loc[0]}",
+                            width=width,
+                            height=height,
+                            fps=fps)
+                        
+                        self.recorders[loc].start()
+                        ok = True
+                        msg = f"Recording started"
+                        self.get_logger().info(f"{loc.capitalize()} camera recording started.")
+                    except Exception as e:
+                        self.recorders[loc] = None
+                        ok = False
+                        msg = f"Failed to start: {e}"
 
-                results.append((loc, ok, msg))
-
-                # Light policy per-side
-                if ok:  # start
-                    with self.recording_lock:
+                    # Light policy per-side
+                    if ok:  # start
                         self.recording_active[loc] = True
-                    self._set_light(loc, True)
+                        self._set_light(loc, True)
+                    results.append((loc, ok, msg))
         
         # Stop recording on each target
         elif cmd == 3:
-            for loc in targets:
-                if self.recording_active[loc] == False:
-                    ok = True
-                    msg = "Not recording."
-                    results.append((loc, ok, msg))
-                    continue
-                try:
-                    self.get_logger().info(f"Stop camera {loc}")
-                    written = self.recorders[loc].stop()
-                    ok = True
-                    msg = f"Stopped. Frames={written}"
-                    self.get_logger().info(f"{loc.capitalize()} camera recording stopped.")
-                finally:
-                    self.recorders[loc] = None
-                if ok:  # stop
-                    with self.recording_lock:
-                        self.recording_active[loc] = False
-                    self._set_light(loc, False)
-                results.append((loc, ok, msg))
-
-        # Stop GPS only if both cameras have stopped
             with self.recording_lock:
+                for loc in targets:
+                    if self.recording_active[loc] == False:
+                        ok = True
+                        msg = "Not recording."
+                        results.append((loc, ok, msg))
+                        continue
+                    try:
+                        self.get_logger().info(f"Stop camera {loc}")
+                        written = self.recorders[loc].stop()
+                        ok = True
+                        msg = f"Stopped. Frames={written}"
+                        self.get_logger().info(f"{loc.capitalize()} camera recording stopped.")
+                    finally:
+                        self.recorders[loc] = None
+                    if ok:  # stop
+                        self.recording_active[loc] = False
+                        self._set_light(loc, False)
+                    results.append((loc, ok, msg))
+
+                # Stop GPS only if both cameras have stopped
                 still_recording = any(self.recording_active.values())
-            if not still_recording:
-                self._stop_gps_logging()
+                if not still_recording:
+                    self._stop_gps_logging()
 
         # Combine results
         if all(ok for _, ok, _ in results):
@@ -228,7 +238,7 @@ class CameraRecordManager(Node):
                 resp.response_string = "; ".join(f"{loc}: ok" for loc, _, _ in results)
         else:
             resp.response_code = False
-            resp.response_string = "; ".join(f"{loc}: {msg}" for loc, ok, msg in results if not ok)
+            resp.response_string = "; ".join(f"{loc}: {msg}" for loc, ok, msg in results)
 
         return resp
     
@@ -251,29 +261,26 @@ class CameraRecordManager(Node):
         if self.is_gps_logging:
             return
         
-        self.is_gps_logging = True
         with self.gps_lock:
+            self.is_gps_logging = True
             self.gps_log.clear()
-        
-        self.gps_output_path = f"{abs_basename}_gps.json"
-        self.get_logger().info(f"Started GPS logging → {self.gps_output_path}")
+            self.gps_output_path = f"{abs_basename}_gps.json"
+            self.get_logger().info(f"Started GPS logging → {self.gps_output_path}")
 
     def _stop_gps_logging(self):
         """Write all collected GPS samples to a single JSON file."""
         if not self.is_gps_logging:
             return
         
-        self.is_gps_logging = False
-        
         # Copy data under lock
         with self.gps_lock:
+            self.is_gps_logging = False
             data = {"gps": list(self.gps_log)}
             num_samples = len(self.gps_log)
             self.gps_log.clear()
         
-        # Write outside lock
-        json_path = self.gps_output_path
-        self.gps_output_path = None
+            json_path = self.gps_output_path
+            self.gps_output_path = None
         
         try:
             os.makedirs(os.path.dirname(json_path), exist_ok=True)

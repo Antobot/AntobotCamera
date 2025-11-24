@@ -67,12 +67,6 @@ class RgbdMkvWriter:
         self.depth_stream.pix_fmt = "gray16le"
         # Intra-only style; FFV1 is inherently intra, but g=1 keeps keyframes each frame
         self.depth_stream.codec_context.gop_size = 1
-        # Put depth-specific metadata on the depth stream too
-        if depth_scale is not None:
-            self.depth_stream.metadata["depth_scale"] = str(depth_scale)
-        if color_intrinsics is not None:
-            self.depth_stream.metadata["color_intrinsics_json"] = json.dumps(color_intrinsics)
-        self.depth_stream.metadata["stream"] = "depth_gray16le"
 
 
     def write(self, bgr_frame: np.ndarray, depth_u16: np.ndarray):
