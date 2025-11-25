@@ -56,6 +56,7 @@ class PreviewStreamer:
 
     async def offer(self, request):
         params = await request.json()
+        cam_id = request.match_info.get("cam_id")
         offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
 
         pc = RTCPeerConnection()
@@ -69,17 +70,17 @@ class PreviewStreamer:
 
         @pc.on("connectionstatechange")
         async def on_connectionstatechange():
-            log_info("Connection state is %s", pc.connectionState)
+            log_info("Connection state is {pc.connectionState}")
             if pc.connectionState == "failed":
                 await pc.close()
                 self.pcs.discard(pc)
-
-        # Setup and add track to connection         
-        if self.track_reference is not None:
-            self.track_reference.set_size(params["width"], params["height"])
-            pc.addTrack(self.track_reference)
+        track_reference = self.track_reference.get(cam_id)
+        if track_reference:
+            track_reference.set_size(params["width"], params["height"])
+            pc.addTrack(track_reference)
+            log_info(f"Added track for {cam_id}")
         else:
-            log_info("Tried to add track but track is None")
+            log_info(f"No track found for {cam_id}")
             
         # handle offer
         await pc.setRemoteDescription(offer)
@@ -108,7 +109,7 @@ class PreviewStreamer:
 
     def run(self):
         """
-        Run the server to provide the /offer resource and handle requests.
+        Run the server to provide the /cam_id resource and handle requests.
         """
                
         app = web.Application()
@@ -122,7 +123,7 @@ class PreviewStreamer:
                     allow_headers="*",
                 )
         })
-        resource = cors.add(app.router.add_resource("/offer"))
+        resource = cors.add(app.router.add_resource("/{cam_id}"))
         cors.add(resource.add_route("POST", self.offer))
 
         host = '0.0.0.0'
