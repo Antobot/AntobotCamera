@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Camera Preview: cam1 & cam2</title>
+<style>
+  video {
+    width: 45%;
+    margin: 10px;
+    border: 1px solid #ccc;
+  }
+  #videos {
+    display: flex;
+    justify-content: center;
+  }
+  button {
+    margin: 5px;
+  }
+</style>
+</head>
+<body>
+  <h1>Camera Preview: cam1 & cam2</h1>
+  <div>
+    <button id="startCam1">Start cam1</button>
+    <button id="startCam2">Start cam2</button>
+  </div>
+  <div id="videos">
+    <video id="videoCam1" autoplay playsinline controls muted></video>
+    <video id="videoCam2" autoplay playsinline controls muted></video>
+  </div>
+
+<script>
+const servers = null; // Use default STUN servers
+
+async function startStream(camId, videoElement) {
+  // Create peer connection
+  const pc = new RTCPeerConnection(servers);
+
+  pc.ontrack = (event) => {
+    // Set remote stream to video element
+    videoElement.srcObject = event.streams[0];
+  };
+
+  // Create offer
+  const offer = await pc.createOffer({
+    offerToReceiveVideo: true,
+    offerToReceiveAudio: false
+  });
+  await pc.setLocalDescription(offer);
+
+  // Send offer to server
+  const response = await fetch(`http://192.168.9.78:8080/${camId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type, width: 1280, height: 720 })
+  });
+
+  const answer = await response.json();
+  await pc.setRemoteDescription(answer);
+
+  return pc;
+}
+
+document.getElementById('startCam1').addEventListener('click', () => {
+  startStream('cam1', document.getElementById('videoCam1')).catch(console.error);
+});
+
+document.getElementById('startCam2').addEventListener('click', () => {
+  startStream('cam2', document.getElementById('videoCam2')).catch(console.error);
+});
+</script>
+</body>
+</html>
+
