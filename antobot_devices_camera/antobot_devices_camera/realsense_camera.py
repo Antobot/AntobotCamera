@@ -4,6 +4,100 @@ import numpy as np
 import pyrealsense2 as rs
 import cv2
 
+from aiortc import VideoStreamTrack
+from av import VideoFrame
+import math
+
+
+class CameraStreamTrack(VideoStreamTrack):
+    """
+    A video track that captures frames from a callback to the latest pi camera request
+    """
+    def __init__(self, read_array_callback, frame_dims):
+        """
+        Initialise a CameraStreamTrack
+
+        Args:
+            read_array_callback (callback): callback to read frame from the camera
+            frame_dims (tuple): dimensions of camera frame (height, width)   
+        """
+        super().__init__()
+        
+        # Callback to read frame from the camera
+        self.read_frame = read_array_callback
+        
+        # Dimensions that the camera records at
+        # (height, width) (assuming portrait after a 90 deg rotation)
+        self.camera_dims = frame_dims
+        
+        # Placeholder for stream dimensions, calculated and updated when stream is requested
+        # (height, width)
+        self.stream_dims = self.camera_dims
+        
+
+    def set_size(self, width, height):
+        """
+        Calculates and saves the appropriate stream size given the dimensions of the container on the webpage.
+
+        Args:
+            width (int): maximum width in px permitted for the stream 
+            height (int): maximum height in px permitted for the stream       
+        """
+        # container dims on webpage
+        hc = height
+        wc = width
+
+        # camera frame dims
+        hf = self.camera_dims[0]
+        wf = self.camera_dims[1]
+
+        # set stream size to limiting height/width
+        if hf/hc > wf/wc:
+            height = hc
+            width = math.floor(wf/hf * height)
+        else:
+            width = wc
+            height = math.floor(hf/wf * width)
+
+        self.stream_dims = (height, width)
+
+    async def recv(self):
+        """
+        Returns frame for webRTC stream when called.
+
+        Reads frame from camera using provided callback, rotates and resizes. 
+        Returns green frame if the callback doesn't yield a frame.
+
+        Returns:
+            video_frame (VideoFrame): encoded frame   
+        """
+        pts, time_base = await self.next_timestamp()
+
+        # Read latest frame from RPiInsightCam
+        frame = self.read_frame()  
+
+        # If frame is none, return green
+        if frame is not None:
+            frame = np.rot90(frame)
+            video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
+            video_frame = video_frame.reformat(self.stream_dims[1], self.stream_dims[0])
+        else:
+            video_frame = VideoFrame(width=self.stream_dims[1], height=self.stream_dims[0])
+
+        video_frame.pts = pts
+        video_frame.time_base = time_base
+        
+        return video_frame
+
+    def stop(self):
+        # catch stop from receiver and keep alive
+        print('CameraStreamTrack stop caught. Keeping alive.')
+
+    def close(self):
+        print('Stopping CameraStreamTrack.')
+        super().stop()
+
+
 class CameraDriver:
     """
     Owns the RealSense pipeline and yields color+depth aligned frames.
@@ -12,6 +106,7 @@ class CameraDriver:
     def __init__(self, port, width=1280, height=720, fps=30):
         self.width = width
         self.height = height
+        self.dims = (width, height)
         self.fps = fps
         self.port = port  # e.g. "/usb2/2-3/2-3:1.0"
         self.pipeline = None
@@ -20,7 +115,18 @@ class CameraDriver:
         self.depth_scale = 0.001
         self.color_intrinsics = None
         self._running = False
+        self.last_color_frame = None
 
+        # Create video track for stream
+        self.stream_track = CameraStreamTrack(self.read_request_array, self.dims)
+    def read_request_array(self):
+        """
+        Callback to read the latest frame as an array.
+
+        Returns:
+            out ( array | None ) : numpy array of image or None if no request available
+        """
+        return self.last_color_frame
     def _select_device_by_port(self):
         #select device by port
         ctx = rs.context()
@@ -126,6 +232,7 @@ class CameraDriver:
 
             color_rgb = np.asarray(c.get_data())        # RGB
             color_bgr = cv2.cvtColor(color_rgb, cv2.COLOR_RGB2BGR)
+            self.last_color_frame = color_bgr
             depth_u16 = np.asarray(d.get_data())        # Z16
 
             yield color_bgr, depth_u16
