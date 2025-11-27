@@ -238,7 +238,7 @@ class CameraRecordManager(Node):
                 resp.response_string = "; ".join(f"{loc}: ok" for loc, _, _ in results)
         else:
             resp.response_code = False
-            resp.response_string = "; ".join(f"{loc}: {msg}" for loc, ok, msg in results)
+            resp.response_string = "; ".join(f"{loc}: {msg}" for loc, ok, msg in results if not ok)
 
         return resp
     
