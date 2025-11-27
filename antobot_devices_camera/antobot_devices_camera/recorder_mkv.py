@@ -182,7 +182,19 @@ class Recorder:
         if self._running:
             print("[WARN] Recorder already running, ignoring start()")
             return
-        self.cam.start()
+        try:
+            self.cam.start()
+        except Exception as e:
+            for i in range(3):
+                print(f"[Recorder Warning] Camera failed to start, retrying soft reset ({i+1}/3): {e}")
+                try:
+                    self.cam.soft_restart()
+                    break
+                except Exception as e2:
+                    pass
+            else:
+                raise RuntimeError("Recorder failed to start camera after retries.") from e   
+
         self._stop.clear()
 
         # Pre-open MKV with metadata from camera

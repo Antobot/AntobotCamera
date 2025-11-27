@@ -171,7 +171,17 @@ class CameraDriver:
         
         try:
             for s in self.selected_device.query_sensors():
+                # # DISABLE Global Time (for Multi-Cam stability)
+                # # When enabled, the driver drops frames if timestamps don't match perfectly.
+                # if s.supports(rs.option.global_time_enabled):
+                #     s.set_option(rs.option.global_time_enabled, 0)
                 
+                # # DISABLE Auto-Exposure Priority
+                # #    When ON, the camera lowers FPS in dark scenes to get more light.
+                # #    We need constant FPS to prevent the 'Feeder' from timing out.
+                # if s.supports(rs.option.auto_exposure_priority):
+                #     s.set_option(rs.option.auto_exposure_priority, 0)
+
                 # Global: Increase internal driver queue
                 if s.supports(rs.option.frames_queue_size):
                     s.set_option(rs.option.frames_queue_size, 32)
@@ -294,6 +304,28 @@ class CameraDriver:
             
         return roi_left_idx, roi_right_idx
 
+    
+    # def hardware_reset(self):
+    #     """Forces a hardware reset on the device."""
+    #     print("LEVEL 2 RECOVERY: TRIGGERING HARDWARE RESET")
+    #     try:
+    #         if self.selected_device:
+    #             self.selected_device.hardware_reset()
+    #             self.selected_device = None 
+    #     except Exception as e:
+    #         print(f"Hardware reset failed (device might be gone): {e}")
+        
+    #     # Wait for USB enumeration
+    #     print("Waiting 5 seconds for device re-enumeration...")
+    #     time.sleep(5)
+
+    def soft_restart(self):
+        """Attempts to stop and start the pipeline (Software Reset)."""
+        print("LEVEL 1 RECOVERY: Attempting Software Restart ")
+        self.stop()
+        time.sleep(0.5) # Give it a moment to release resources
+        self.start()    # This might fail if device is truly hung
+
     def start(self):
         if self._running:
             return
@@ -343,6 +375,14 @@ class CameraDriver:
             ppx=intr.ppx, ppy=intr.ppy, fx=intr.fx, fy=intr.fy,
             model=int(intr.model), coeffs=list(intr.coeffs),
         )
+
+        # SANITY CHECK - Verify that frames are arriving
+        try:
+            _ = fs = self.frame_queue.wait_for_frame(1000).as_frameset()
+            print(f"[{self.port}] Camera started and verified successfully.")
+        except RuntimeError:
+            raise RuntimeError(" CameraDriver: {self.port} No frames received from camera after starting pipeline.")
+            
         self._running = True
 
     def stop(self):
