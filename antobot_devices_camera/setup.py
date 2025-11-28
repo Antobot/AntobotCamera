@@ -24,6 +24,12 @@ setup(
     entry_points={
         'console_scripts': [
             'camera_record_manager = antobot_devices_camera.camera_record_manager:main',
+            'transfer_manager = antobot_devices_camera.transfer_manager:main',
         ],
     },
+    options={
+        'build_scripts': {
+            'executable': '/usr/bin/env python3'
+        }
+    }
 )

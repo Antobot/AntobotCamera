@@ -1,0 +1,18 @@
+# Goal: List of files to transfer
+string destination
+SessionTransferItem[] transfer_list
+
+---
+
+# Result: Success or failure message
+bool success
+string message
+
+---
+
+# Feedback: Transfer progress updates
+float32 percent_complete
+float32 speed
+int64 bytes_copied
+int64 bytes_remaining
+int64 time_remaining  # Estimated seconds remaining
