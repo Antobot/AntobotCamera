@@ -5,71 +5,155 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Camera Preview: cam1 & cam2</title>
 <style>
-  video {
-    width: 45%;
-    margin: 10px;
-    border: 1px solid #ccc;
+  body {
+    font-family: sans-serif;
+    text-align: center;
+    background-color: #f0f0f0;
   }
+
+  /* Main Container for the two video feeds */
   #videos {
     display: flex;
+    flex-wrap: wrap;
     justify-content: center;
+    gap: 20px; /* Space between cameras */
+    margin-top: 20px;
   }
+
+  /* THE WRAPPER (The Portrait Frame)
+     This div forces the layout to reserve vertical space.
+     Dimensions are set to 9:16 aspect ratio (Portrait).
+  */
+  .video-wrapper {
+    position: relative;
+    width: 360px;       /* 9 units wide */
+    height: 640px;      /* 16 units high */
+    background: #000;
+    border: 2px solid #333;
+    border-radius: 8px;
+    overflow: hidden;   /* Hide corners if rotation isn't perfect */
+    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+  }
+
+  /* THE VIDEO (The Landscape Content) 
+     We force it to swap dimensions and rotate to fit the wrapper.
+  */
+  video {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    
+    /* SWAP: Video Width = Wrapper Height */
+    width: 640px; 
+    
+    /* SWAP: Video Height = Wrapper Width */
+    height: 360px;
+    
+    /* Center it and Rotate it */
+    transform: translate(-50%, -50%) rotate(-90deg);
+    
+    /* Ensure image fills the space */
+    object-fit: cover; 
+  }
+
   button {
+    padding: 10px 20px;
+    font-size: 16px;
+    cursor: pointer;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
     margin: 5px;
+  }
+  button:hover {
+    background-color: #0056b3;
   }
 </style>
 </head>
 <body>
   <h1>Camera Preview: cam1 & cam2</h1>
   <div>
-    <button id="startCam1">Start cam1</button>
-    <button id="startCam2">Start cam2</button>
+    <button id="startCam1">Start Camera 1</button>
+    <button id="startCam2">Start Camera 2</button>
   </div>
+
   <div id="videos">
-    <video id="videoCam1" autoplay playsinline controls muted></video>
-    <video id="videoCam2" autoplay playsinline controls muted></video>
+    <div class="video-wrapper">
+        <video id="videoCam1" autoplay playsinline muted></video>
+    </div>
+    
+    <div class="video-wrapper">
+        <video id="videoCam2" autoplay playsinline muted></video>
+    </div>
   </div>
 
 <script>
-const servers = null; // Use default STUN servers
+// --- GLOBAL VARIABLE FOR CONNECTIONS ---
+// (Required to prevent "Stop Caught" errors)
+const activeConnections = {}; 
 
 async function startStream(camId, videoElement) {
-  // Create peer connection
-  const pc = new RTCPeerConnection(servers);
+  // 1. Close existing connection if user clicks start again
+  if (activeConnections[camId]) {
+    activeConnections[camId].close();
+  }
+
+  // 2. Create new connection
+  const pc = new RTCPeerConnection(null);
+  
+  // 3. Save globally to prevent Garbage Collection
+  activeConnections[camId] = pc;
 
   pc.ontrack = (event) => {
-    // Set remote stream to video element
     videoElement.srcObject = event.streams[0];
   };
 
-  // Create offer
-  const offer = await pc.createOffer({
-    offerToReceiveVideo: true,
-    offerToReceiveAudio: false
-  });
+  // Modern WebRTC: explicit receive only
+  pc.addTransceiver('video', { direction: 'recvonly' });
+
+  const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
 
-  // Send offer to server
-  const response = await fetch(`http://192.168.9.78:8080/${camId}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type, width: 1280, height: 720 })
-  });
+  // --- IP ADDRESS CHECK ---
+  // Ensure this IP matches your Jetson. 
+  // If opening this HTML file on the Jetson itself, use 'localhost' or '127.0.0.1'
+  const JETSON_IP = "192.168.9.142"; 
+  
+  try {
+      const response = await fetch(`http://${JETSON_IP}:8080/${camId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            sdp: pc.localDescription.sdp, 
+            type: pc.localDescription.type, 
+            width: 1280, 
+            height: 720 
+        })
+      });
 
-  const answer = await response.json();
-  await pc.setRemoteDescription(answer);
+      if (!response.ok) {
+          throw new Error(`Server returned ${response.status}`);
+      }
 
-  return pc;
+      const answer = await response.json();
+      await pc.setRemoteDescription(answer);
+      
+      console.log(`Stream ${camId} started successfully.`);
+
+  } catch (e) {
+      console.error("Connection failed:", e);
+      alert(`Failed to connect to ${camId}. Check console/IP.`);
+  }
 }
 
 document.getElementById('startCam1').addEventListener('click', () => {
-  startStream('cam1', document.getElementById('videoCam1')).catch(console.error);
+  startStream('cam1', document.getElementById('videoCam1'));
 });
 
 document.getElementById('startCam2').addEventListener('click', () => {
-  startStream('cam2', document.getElementById('videoCam2')).catch(console.error);
+  startStream('cam2', document.getElementById('videoCam2'));
 });
 </script>
 </body>
 </html>
-
