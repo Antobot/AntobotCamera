@@ -264,6 +264,7 @@ class CameraDriver:
         # 5. Start Pipeline with a large Python buffer
         self.frame_queue = rs.frame_queue(150, keep_frames=True)
         self.profile = self.pipeline.start(cfg, self.frame_queue) 
+        self._configure_sensors() 
 
         # 6. Setup Align
         self.align = rs.align(rs.stream.color)
