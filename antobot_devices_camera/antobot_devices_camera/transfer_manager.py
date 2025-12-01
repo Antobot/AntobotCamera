@@ -16,12 +16,12 @@ from antobot_camera_msgs.srv import (
     GetAvailability,
     GetBandwidth,
     GetSessionTransferList,
+    StartTransfer,
 )
 from antobot_camera_msgs.msg import (
     SessionTransferItem,
     TransferStatus,
 )
-from antobot_camera_msgs.action import DoTransfer
 
 from antobot_devices_camera.wifi_transfer import WiFiTransfer
 from antobot_devices_camera.usb_transfer import USBTransfer
@@ -37,7 +37,8 @@ class TransferManager(Node):
         super().__init__('transfer_manager')
 
         # Load configuration
-        self.declare_parameter('config_path', '/home/scouting/ros2_ws/src/acCamera/antobot_devices_camera/config/scouting_config.yaml')
+        self.declare_parameter('config_path', '/home/fubinzhang/Lab/ros2_zfb_ws/src/acCamera/antobot_devices_camera/config/scouting_config.yaml')
+        # self.declare_parameter('config_path', '/home/scouting/ros2_ws/src/acCamera/antobot_devices_camera/config/scouting_config.yaml')
         self.cfg = self._load_cfg()
 
         # Unpack config details
@@ -48,10 +49,10 @@ class TransferManager(Node):
         self.host = self.cfg.get("transfer", {}).get("SERVER_IP")
         port = 22
         self.username = self.cfg.get("transfer", {}).get("SERVER_USER")
-        password = self.cfg.get("transfer", {}).get("SERVER_PWD")
+        password = self.cfg.get("transfer", {}).get("SERVER_PWD",1234)
         self.remote_saving_path = self.cfg.get("transfer", {}).get("REMOTE_SAVING_PATH", f"/home/{self.username}")
         self.wifi_transfer = WiFiTransfer(self.host, port, self.username, password=password)
-        self.robot_id = os.getenv('ROBOT_ID', None)
+        self.robot_id = os.getenv('ROBOT_ID', "1")
 
         # USB transfer settings
         user = os.getenv('USER')
@@ -64,7 +65,6 @@ class TransferManager(Node):
         # Concurrency 
         self.usb_lock = threading.Lock()
         self.wifi_lock = threading.Lock()
-        self.transfer_pending = threading.Event()
 
         # States
         self.server_available = False
@@ -76,9 +76,9 @@ class TransferManager(Node):
             'is_transferring': False,
             'destination': '',
             'progress': 0.0,
+            'speed': 0,
             'time_remaining': 0,
             'bytes_remaining': 0,
-            'speed': 0
         }
 
         ns = "/transfer_manager"
@@ -103,13 +103,10 @@ class TransferManager(Node):
             f"{ns}/get_bandwidth",
             self._service_callback_get_bandwidth
         )
-
-        # ==================== ROS2 ActionServer ====================
-        self.action_server = ActionServer(
-            self,
-            DoTransfer,
-            f"{ns}/do_transfer",
-            self._action_callback_do_transfer
+        self.srv_start_transfer = self.create_service(
+            StartTransfer,
+            f"{ns}/start_transfer",
+            self._service_callback_start_transfer
         )
 
         # ==================== ROS2 Publisher ====================
@@ -118,13 +115,18 @@ class TransferManager(Node):
             f"{ns}/status",
             10
         )
+        self.transfer_status_timer = None
 
     def publish_transfer_status(self):
-        self.transfer_status_pub.publish(
-            TransferStatus(
-                **{k: v for k, v in self.current_transfer_status.items() if k in TransferStatus.__slots__}
-            )
-        )
+        msg = TransferStatus()
+        msg.is_transferring = self.current_transfer_status['is_transferring']
+        msg.destination = self.current_transfer_status['destination']
+        msg.progress = float(self.current_transfer_status['progress'])
+        msg.speed = float(self.current_transfer_status['speed'])
+        msg.time_remaining = int(self.current_transfer_status['time_remaining'])
+        msg.bytes_remaining = int(self.current_transfer_status['bytes_remaining'])
+        self.transfer_status_pub.publish(msg)
+
     def _load_cfg(self):
         path = self.get_parameter('config_path').get_parameter_value().string_value
         self.get_logger().info(f"Loading config from: {path}")
@@ -245,14 +247,16 @@ class TransferManager(Node):
         response.bandwidth = 0.0
         
         if destination == 'usb':
-            if self.current_transfer_status["is_transferring"] or self.transfer_pending.is_set() or (not self.usb_lock.acquire()):
+            if self.current_transfer_status["is_transferring"] or (not self.usb_lock.acquire()):
+                response.bandwidth = self.current_transfer_status["speed"]
                 return response
             try:
                 response.bandwidth = self.usb_transfer.get_copy_bandwidth()
             finally:
                 self.usb_lock.release()
         elif destination == 'server':
-            if self.current_transfer_status["is_transferring"] or self.transfer_pending.is_set() or (not self.wifi_lock.acquire()):
+            if self.current_transfer_status["is_transferring"] or (not self.wifi_lock.acquire()):
+                response.bandwidth = self.current_transfer_status["speed"]
                 return response
             try:    
                 response.bandwidth = self.wifi_transfer.get_upload_bandwidth(self.remote_saving_path)
@@ -261,109 +265,119 @@ class TransferManager(Node):
 
         return response
             
-
-    def _action_callback_do_transfer(self, goal_handle):
-        
-        goal = goal_handle.request
-        goal_id = goal_handle.goal_id
-        print(goal_id)
+    def _service_callback_start_transfer(self, request, response):
+        """Start transfer service callback.(USB or WIFI)"""
 
         if self.current_transfer_status["is_transferring"]:
-            goal_handle.abort()
-            return DoTransfer.Result(success=False, message="Another transfer running")
+            response.success = False
+            response.message = "Another transfer running"
+            return response
         
-        self.transfer_pending.set()
-        self.current_transfer_status.update(is_transferring=True, destination=goal.destination)
+        self.current_transfer_status.update(
+            is_transferring=True,
+            destination=request.destination,
+            progress=0.0,
+            speed=0,
+            time_remaining=0,
+            bytes_remaining=0,
+        )
+        self.transfer_status_timer = self.create_timer(1.0, self.publish_transfer_status)
 
-        try:
-            if goal.destination == 'usb':
-                success, message = self.copy_files(goal.transfer_list, goal_handle) 
-            elif goal.destination == 'server':
-                success, message = self.upload_files(goal.transfer_list, goal_handle)  
-            else:
-                success = False
-                message = 'Please correct the destination, only usb and server are allowed'
-        except Exception as e:
-            success = False
-            message = str(e)
-        finally:
-            # Reset transfer status when done
-            self.current_transfer_status.update({
-                'is_transferring': False,
-                'destination': '',
-                'progress': 0.0,
-                'time_remaining': 0,
-                'bytes_remaining': 0,
-                'speed': 0
-            })
-            self.transfer_pending.clear()
-
-        if success:
-            goal_handle.succeed()
-            return DoTransfer.Result(success=True, message=message)
-        else:
-            goal_handle.abort()
-            return DoTransfer.Result(success=False, message=message)
+        threading.Thread(
+            target=self.transfer_files,
+            args=(request,),
+            daemon=True
+        ).start()
+        while True:
+            if self.current_transfer_status["is_transferring"] and self.current_transfer_status["progress"] > 0:
+                response.success = True
+                response.message = f"Transfer is starting"
+                return response
     
-    ###########################################################################################################
-    ## USB COPY                                                                        
-    ###########################################################################################################
-    def copy_files(self, sessions, goal_handle=None):
-        """Copy sessions to USB using rsync with progress feedback."""
 
-        failures, feedback = [], DoTransfer.Feedback()
-        total = sum(s.size for s in sessions)
-        with self.usb_lock:
-            for s in sessions:
-                src, dst = self.rec_dir / s.session_name, Path(self.usb_transfer.usb_dir) / s.session_name
-                dst.mkdir(parents=True, exist_ok=True)
-                try:
-                    pct = self.transfer_session_with_feedback(src, dst, total, feedback, goal_handle)
-                    # update manifest.yaml status
-                    self.usb_transfer.update_upload_state(src)
-                    self.get_logger().info(f"{s.session_name} copy complete ({pct:.0f}%)")
-                except Exception as e:
-                    self.get_logger().error(f"USB copy failed for {s.session_name}: {e}")
-                    failures.append(s.session_name)
+    def transfer_files(self, request):
+        """Background thread to perform the transfer."""
+
+        destination = request.destination
+        transfer_list = request.transfer_list
+
+        failures = []
+        total = sum(s.size for s in transfer_list)
+
+        if destination == 'usb':
+            with self.usb_lock:
+                for s in transfer_list:
+                    src = self.rec_dir / s.session_name
+                    if self.robot_id:
+                        dst = Path(self.usb_transfer.usb_dir) / s.session_name / self.robot_id
+                    else:
+                        dst = Path(self.usb_transfer.usb_dir) / s.session_name
+                    dst.mkdir(parents=True, exist_ok=True)
+                    print(f"Starting transfer of {src} to {dst}")
+                    self.get_logger().info(f"Uploading {s.session_name} to {dst}...")
+                    try:
+                        pct = self.transfer_session_with_feedback(src, dst)
+                        # update manifest.yaml status
+                        self.usb_transfer.update_upload_state(src, robot_id=self.robot_id)
+                        self.get_logger().info(f"{s.session_name} copy complete ({pct:.0f}%)")
+                    except Exception as e:
+                        self.get_logger().error(f"copy failed for {s.session_name}: {e}")
+                        failures.append(s.session_name)
             self.usb_transfer.unmount()
-        return (not failures), ("All files copied" if not failures else f"Copy failed: {', '.join(failures)}")
-    
-    ###########################################################################################################
-    ## WIFI Upload                                                                    
-    ########################################################################################################### 
-    def upload_files(self, sessions, goal_handle=None):
-        """Upload sessions to remote server using rsync with progress feedback."""
-
-        failures, feedback = [], DoTransfer.Feedback()
-        total = sum(s.size for s in sessions)
-
-        with self.wifi_lock:
-            for s in sessions:
-                src = self.rec_dir / s.session_name
-                if self.robot_id:
-                    dst = f"{self.username}@{self.host}:{os.path.join(self.remote_saving_path, s.session_name, self.robot_id)}"
-                else:
-                    dst = f"{self.username}@{self.host}:{os.path.join(self.remote_saving_path, s.session_name)}"
-
-                self.get_logger().info(f"Uploading {s.session_name} to {dst}...")
-                try:
-                    # Transfer session
-                    pct = self.transfer_session_with_feedback(src, dst, total, feedback, goal_handle)
-
-                    # Update manifest.yaml state (both local and remote)
-                    self.wifi_transfer.update_upload_state(src, robot_id=self.robot_id, remote_path=self.remote_saving_path)
-
-                    self.get_logger().info(f"{s.session_name} upload complete ({pct:.0f}%)")
-                except Exception as e:
-                    self.get_logger().error(f"Upload failed for {s.session_name}: {e}")
-                    failures.append(s.session_name)
-
             success = not failures
-            message = "All files uploaded successfully." if success else f"Upload failed: {', '.join(failures)}"
-            return success, message
+            message = "All files copied" if not failures else f"Copy failed: {', '.join(failures)}"
+        
+        elif destination == 'server':
+            with self.wifi_lock:
+                for s in transfer_list:
+                    src = self.rec_dir / s.session_name
+                    if self.robot_id:
+                        dst = f"{self.username}@{self.host}:{os.path.join(self.remote_saving_path, s.session_name, self.robot_id)}"
+                        # Ensure the remote directory exists
+                        try:
+                            subprocess.run(
+                                ["ssh", f"{self.username}@{self.host}", "mkdir", "-p", dst.split(":", 1)[1]],
+                                check=True
+                            )
+                        except subprocess.CalledProcessError as e:
+                            self.get_logger().error(f"Failed to create remote directory {dst}: {e}")
+                    else:
+                        dst = f"{self.username}@{self.host}:{os.path.join(self.remote_saving_path, s.session_name)}"
+
+                    self.get_logger().info(f"Uploading {s.session_name} to {dst}...")
+                    try:
+                        # Transfer session
+                        pct = self.transfer_session_with_feedback(src, dst)
+
+                        # Update manifest.yaml state (both local and remote)
+                        self.wifi_transfer.update_upload_state(src, robot_id=self.robot_id, remote_path=self.remote_saving_path)
+
+                        self.get_logger().info(f"{s.session_name} upload complete ({pct:.0f}%)")
+                    except Exception as e:
+                        self.get_logger().error(f"Upload failed for {s.session_name}: {e}")
+                        failures.append(s.session_name)
+
+                success = not failures
+                message = "All files uploaded successfully." if success else f"Upload failed: {', '.join(failures)}"
+
+        if self.transfer_status_timer is not None:
+            self.transfer_status_timer.cancel()
+            self.transfer_status_timer = None
+
+        self.current_transfer_status.update(
+            is_transferring=False,
+            destination='',
+            progress=100.0 if success else 0.0,
+            speed=0,
+            time_remaining=0,
+            bytes_remaining=0,
+        )
+
+        self.publish_transfer_status()
+        return success, message
 
     ###########################################################################################################
-    def transfer_session_with_feedback(self, src, dst, total_size, feedback, goal_handle=None):
+    def transfer_session_with_feedback(self, src, dst):
         """
         Upload a folder using rsync, parse progress, and publish ROS feedback.
         """
@@ -373,7 +387,7 @@ class TransferManager(Node):
             src_str += '/'
         
         dst_str = os.fspath(dst) 
-
+        
         cmd = [
             "rsync",
             "-ahvv",
@@ -385,21 +399,9 @@ class TransferManager(Node):
             src_str, dst_str
         ]
 
-        # Ensure the remote directory exists
-        if self.robot_id:
-            try:
-                subprocess.run(
-                    ["ssh", f"{self.username}@{self.host}", "mkdir", "-p", dst.split(":", 1)[1]],
-                    check=True
-                )
-            except subprocess.CalledProcessError as e:
-                self.get_logger().error(f"Failed to create remote directory {dst_str}: {e}")
-
-
-        percent = 0
-
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-
+        
+        percent = 0.0
         for line in iter(proc.stdout.readline, ''):
             line = line.strip()
             match = re.match(r"([\d.]+[KMG]?)\s+(\d+)%\s+([\d.]+[A-Z]?B/s)\s+(\d+:\d+:\d+)", line)
@@ -409,24 +411,23 @@ class TransferManager(Node):
                 speed_str = match.group(3)
                 time_remain_str = match.group(4)
 
-                feedback.percent_complete = percent
-                feedback.bytes_copied = int((percent / 100.0) * total_size)
-                feedback.bytes_copied = self._parse_size_to_bytes(bytes_transferred_str)
-                feedback.time_remaining = self._hms_to_seconds(time_remain_str)
-                feedback.speed = self._parse_speed_to_mb(speed_str)
+                bytes_transferred = self._parse_size_to_bytes(bytes_transferred_str)
+                time_remaining = self._hms_to_seconds(time_remain_str)
 
+                speed = self._parse_speed_to_mb(speed_str)
+                if percent > 0:
+                    total_bytes = int(bytes_transferred * 100 / percent)
+                    bytes_remaining = total_bytes - bytes_transferred
+                else:
+                    bytes_remaining = 0
+                
                 self.current_transfer_status.update({
                     'progress': percent,
-                    'time_remaining': feedback.time_remaining,
-                    'bytes_remaining': feedback.bytes_remaining,
-                    'speed': feedback.speed
+                    'speed': speed,
+                    'time_remaining': time_remaining,
+                    'bytes_remaining': bytes_remaining,
                 })
 
-                if goal_handle:
-                    try:
-                        goal_handle.publish_feedback(feedback)
-                    except Exception as e:
-                        self.get_logger().warn(f"publish_feedback failed: {e}")
 
         proc.wait()
         if proc.returncode != 0:
@@ -451,7 +452,6 @@ class TransferManager(Node):
         match = re.match(r"([\d.]+)([KMG]?)B/s", speed_str)
         if not match:
             return 0.0
-        
         number = float(match.group(1))
         suffix = match.group(2)
         

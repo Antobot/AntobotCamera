@@ -25,19 +25,14 @@ set(SRV_FILES
   "srv/GetAvailability.srv"
   "srv/GetBandwidth.srv"
   "srv/GetSessionTransferList.srv"
+  "srv/StartTransfer.srv"
 )
-
-set(ACTION_FILES
-  "action/DoTransfer.action"
-)
-
 # ------------------------------
 # Generate ROS interfaces
 # ------------------------------
 rosidl_generate_interfaces(${PROJECT_NAME}
   ${MSG_FILES}
   ${SRV_FILES}
-  ${ACTION_FILES}
   DEPENDENCIES std_msgs builtin_interfaces
 )
 
