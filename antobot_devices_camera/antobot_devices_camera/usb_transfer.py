@@ -74,7 +74,7 @@ class USBTransfer:
         return (self.TEST_FILE_SIZE / (1024 * 1024)) / elapsed  # MB/s
 
     
-    def update_upload_state(self, session_path: str):
+    def update_upload_state(self, session_path, robot_id = None):
         """
         Mark *usb_transfer_complete* in both the USB‑side and local
         manifest.yaml files for this session.
@@ -82,6 +82,11 @@ class USBTransfer:
         session_name   = Path(session_path).name
         usb_manifest   = Path(self.usb_dir) / session_name / "manifest.yaml"
         local_manifest = Path(session_path)  / "manifest.yaml"
+        if robot_id is None:
+            usb_manifest = Path(self.usb_dir) / session_name / "manifest.yaml"
+        else:
+            usb_manifest = Path(self.usb_dir) / session_name / robot_id / "manifest.yaml"
+            print(f"[USBTransfer] usb_manifest:{usb_manifest}.")
 
         for mpath in (usb_manifest, local_manifest):
             if not mpath.exists():

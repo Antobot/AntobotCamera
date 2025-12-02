@@ -1,0 +1,6 @@
+string destination
+SessionTransferItem[] transfer_list
+---
+
+bool success
+string message
