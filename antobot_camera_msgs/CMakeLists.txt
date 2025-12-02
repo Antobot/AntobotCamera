@@ -26,6 +26,10 @@ set(SRV_FILES
   "srv/GetBandwidth.srv"
   "srv/GetSessionTransferList.srv"
   "srv/StartTransfer.srv"
+  "srv/CreateSession.srv"
+  "srv/GetSessionStatus.srv"
+  "srv/GetFreeSpace.srv"
+  "msg/RecordStatus.msg"
 )
 # ------------------------------
 # Generate ROS interfaces

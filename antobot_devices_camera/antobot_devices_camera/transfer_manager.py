@@ -37,8 +37,8 @@ class TransferManager(Node):
         super().__init__('transfer_manager')
 
         # Load configuration
-        self.declare_parameter('config_path', '/home/fubinzhang/Lab/ros2_zfb_ws/src/acCamera/antobot_devices_camera/config/scouting_config.yaml')
-        # self.declare_parameter('config_path', '/home/scouting/ros2_ws/src/acCamera/antobot_devices_camera/config/scouting_config.yaml')
+        # self.declare_parameter('config_path', '/home/fubinzhang/Lab/ros2_zfb_ws/src/acCamera/antobot_devices_camera/config/scouting_config.yaml')
+        self.declare_parameter('config_path', '/home/scouting/ros2_ws/src/acCamera/antobot_devices_camera/config/scouting_config.yaml')
         self.cfg = self._load_cfg()
 
         # Unpack config details

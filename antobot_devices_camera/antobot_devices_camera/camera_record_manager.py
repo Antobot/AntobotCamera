@@ -1,9 +1,10 @@
 import os
 import json
 import yaml
-import datetime
 from typing import Dict, List
 from threading import Lock
+import psutil
+from datetime import datetime, timedelta
 
 import rclpy
 from rclpy.node import Node
@@ -11,6 +12,12 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import Bool
 from sensor_msgs.msg import NavSatFix
+
+from std_srvs.srv import Trigger
+
+from antobot_camera_msgs.srv import CreateSession, GetFreeSpace
+from antobot_camera_msgs.srv import GetSessionStatus
+from antobot_camera_msgs.msg import RecordStatus
 
 from antobot_camera_msgs.srv import CameraRecord as CameraRecordSrv
 from antobot_devices_camera.realsense_camera import CameraDriver
@@ -25,6 +32,7 @@ class CameraRecordManager(Node):
         super().__init__('camera_record_manager')
         self.declare_parameter('config_path', '/home/scouting/ros2_ws/src/acCamera/antobot_devices_camera/config/scouting_config.yaml')
         self.cfg = self._load_cfg()
+        self.abs_basename = None
 
         self.recorders: Dict[str, Recorder] = {}
         
@@ -62,6 +70,33 @@ class CameraRecordManager(Node):
             callback_group=self.service_cb_group
         )
 
+        self.rec_status_pub = self.create_publisher(RecordStatus, "/record_manager/status", 1)
+
+        self.start_record_service = self.create_service(Trigger, "/record_manager/start_recording", self._serviceCallbackStartRecording)
+        self.stop_record_service = self.create_service(Trigger, "/record_manager/stop_recording", self._serviceCallbackStopRecording)
+
+        self.create_session = self.create_service(CreateSession, "/record_manager/create_session", self._serviceCallbackCreateSession)
+        self.finish_session = self.create_service(Trigger, "/record_manager/finish_session", self._serviceCallbackFinishSession)
+        self.get_session_status = self.create_service(GetSessionStatus, "/record_manager/get_session_status", self._serviceCallbackGetSessionStatus)
+        self.arm_recording_service = self.create_service(Trigger, "/record_manager/arm_recording", self._serviceCallbackArmRecording)
+        self.disarm_recording_service = self.create_service(Trigger, "/record_manager/disarm_recording", self._serviceCallbackDisarmRecording)
+        self.get_free_space_service = self.create_service(GetFreeSpace, "/record_manager/get_free_space", self._serviceCallbackGetFreeSpace)
+
+        self._timer = self.create_timer(10, self.publish_rec_status)
+        self.device_type = self.cfg.get('device_type', 'robot')
+        self.is_recording = False
+        self.current_session = ''
+        self.is_rec_armed = False
+
+        self.camNum = self.cfg.get('camera_num', 0)  # 0
+
+    def publish_rec_status(self):
+        """Publishes the current status at 1 Hz."""
+        status_msg = RecordStatus(
+            is_rec_armed=self.is_rec_armed,
+            is_recording=self.is_recording
+        )
+        self.rec_status_pub.publish(status_msg)
 
     def _load_cfg(self):
         path = self.get_parameter('config_path').get_parameter_value().string_value
@@ -126,7 +161,7 @@ class CameraRecordManager(Node):
         """
         rec_path = self.cfg.get('recording_path', '/root/ros2_ws/data/')
         
-        now = datetime.datetime.now()
+        now = datetime.now()
         date_folder = now.strftime("%Y%m%d")
         
         # Create directory 
@@ -159,8 +194,7 @@ class CameraRecordManager(Node):
         results = []
         # Start recording on each target
         if cmd == 2:
-            abs_basename = self._generate_session_basename()
-            self._start_gps_logging(abs_basename)
+            self._start_gps_logging(self.abs_basename)
         
             for loc in targets:
                 with self.recording_lock:
@@ -180,7 +214,7 @@ class CameraRecordManager(Node):
                         self.get_logger().info(f"Start camera {loc}")
                         self.recorders[loc] = Recorder(
                             camera_driver=cam,
-                            out_basename=abs_basename+f"_{loc[0]}",
+                            out_basename=self.abs_basename+f"_{loc[0]}",
                             width=width,
                             height=height,
                             fps=fps)
@@ -289,6 +323,232 @@ class CameraRecordManager(Node):
             self.get_logger().info(f"Wrote GPS log ({num_samples} samples) → {json_path}")
         except Exception as e:
             self.get_logger().error(f"Failed to write GPS file: {e}")
+
+    def _serviceCallbackStartRecording(self, request, response):
+        self._start_gps_logging(self.abs_basename)
+        self.current_record_entry = {
+            "process_file": True,  # Set to False if needed for exclusion
+            "record_name": self.abs_basename,
+            "row_id": "",  # will be set when recording stopped
+            "timestamp_start": self._now_sec(),
+            "record_length": None,  # Will be updated later
+            "vid_filesize": 0,
+            "bag_filesize": 0,
+        }
+
+
+        targets = ["left", "right"]
+
+    
+        for loc in targets:
+            with self.recording_lock:
+                if self.recording_active[loc]:
+                    ok = True
+                    msg = "Already recording."
+                    continue
+                try:
+                    cam = self.cam_drivers.get(loc)
+
+                    params = self.cfg['camera'][loc]['params']
+                    fps = params.get('framerate', 30)
+                    width = params.get('width', 1280)
+                    height = params.get('height', 720)  
+
+                    self.get_logger().info(f"Start camera {loc}")
+                    self.recorders[loc] = Recorder(
+                        camera_driver=cam,
+                        out_basename=self.abs_basename+f"_{loc[0]}",
+                        width=width,
+                        height=height,
+                        fps=fps)
+                    
+                    self.recorders[loc].start()
+                    ok = True
+                    msg = f"Recording started"
+                    self.get_logger().info(f"{loc.capitalize()} camera recording started.")
+                except Exception as e:
+                    self.recorders[loc] = None
+                    ok = False
+                    msg = f"Failed to start: {e}"
+
+                # Light policy per-side
+                if ok:  # start
+                    self.recording_active[loc] = True
+                    self._set_light(loc, True)
+
+        self.is_recording = True
+        response.success = ok
+        response.message = msg
+        return response
+
+    def _serviceCallbackStopRecording(self, request, response):
+  
+        targets = ["left", "right"]
+
+
+        with self.recording_lock:
+            for loc in targets:
+                if self.recording_active[loc] == False:
+                    ok = True
+                    msg = "Not recording."
+                    continue
+                try:
+                    self.get_logger().info(f"Stop camera {loc}")
+                    written = self.recorders[loc].stop()
+                    ok = True
+                    msg = f"Stopped. Frames={written}"
+                    self.get_logger().info(f"{loc.capitalize()} camera recording stopped.")
+                finally:
+                    self.recorders[loc] = None
+                if ok:  # stop
+                    self.recording_active[loc] = False
+                    self._set_light(loc, False)
+
+            # Stop GPS only if both cameras have stopped
+            still_recording = any(self.recording_active.values())
+            if not still_recording:
+                self._stop_gps_logging()
+
+        self.is_recording = False
+        self.current_record_entry["vid_filesize"] = 0
+        
+        # Update the stored record entry
+        self.current_record_entry["record_length"] = self._now_sec() - float(self.current_record_entry["timestamp_start"])
+        self.current_record_entry["row_id"] = "unknown"
+
+        
+        self.update_manifest(self.current_record_entry)
+        response.success = ok
+        response.message = msg
+        return response
+    
+    def _serviceCallbackCreateSession(self, request, response):
+
+        if self.device_type == 'robot':
+            self._createSessionRobot(request)
+        else:
+            # Create directories
+            next_session_num = self.get_last_session_number() + 1
+            self.current_session = f'session_{next_session_num:03d}'
+
+            self.save_path = os.path.join(self.abs_basename, self.current_session)
+            os.makedirs(self.save_path, exist_ok=True)
+            os.chmod(self.save_path, 0o777)
+
+            self.manifest_path = os.path.join(self.save_path, 'manifest.yaml')
+            self.init_manifest(request.session_description)
+
+            self.is_unfinished = True
+
+        free_space = psutil.disk_usage('/').free / (1024 ** 3)
+        response.success = True
+        response.message = f"New session created {self.abs_basename}, free space {int(free_space)}G."
+        return response
+
+    def _createSessionRobot(self, request=None):
+        self.abs_basename = self._generate_session_basename()
+        self.current_session = os.path.dirname(self.abs_basename)
+        self.manifest_path = os.path.join(self.current_session, 'manifest.yaml')
+
+        if not (os.path.exists(self.manifest_path)):
+
+            if request:
+                self.init_manifest(request.session_description)
+            else:
+                self.init_manifest('')
+
+        self.is_unfinished = True
+
+        return
+    
+    def _serviceCallbackGetSessionStatus(self, request, response):
+
+        response.session_name = self.current_session
+
+        return response
+
+    def _serviceCallbackGetFreeSpace(self, request, response):
+        response.freespace = psutil.disk_usage('/').free / (1024 ** 3)
+        return response
+
+
+    def _serviceCallbackFinishSession(self, request, response):
+
+        self.finalize_manifest()
+        self.current_session = ""
+        self.is_unfinished = False
+        self.current_record_entry = None
+        self.is_rec_armed = False
+
+
+        response.success = True
+        response.message = "Session finished."
+        return response
+
+    
+    def _serviceCallbackArmRecording(self, request, response):
+        self.is_rec_armed = True
+        response.success = True
+        response.message = "Recording is armed successfully.."
+        return response
+
+    def _serviceCallbackDisarmRecording(self, request, response):
+        self.is_rec_armed = False
+
+        response.success = True
+        response.message = "Recording disarmed."
+        return response
+    
+    def init_manifest(self, session_description: str):
+        print(self.manifest_path)
+        manifest_data = {
+            "version": 1.0,
+            "user_description": session_description,
+            "farm_id": "",
+            "field_id": "",
+            "session_start_timestamp": self._now_sec(),
+            "session_finish_timestamp": None,
+            "records": [],
+            "session_complete": False,
+            "upload_complete": False,
+            "usb_transfer_complete": False,
+            "analysis_complete": False,
+            "report_sent": False,
+            "report_generated": False,
+            "session_type": ""
+        }
+
+        with open(self.manifest_path, "w") as f:
+            yaml.dump(manifest_data, f, sort_keys=False)
+        print('-------------')
+    
+    def update_manifest(self, record_entry):
+        with open(self.manifest_path, "r") as f:
+            manifest_data = yaml.safe_load(f)
+
+        manifest_data["records"].append(record_entry)
+
+        with open(self.manifest_path, "w") as f:
+            yaml.safe_dump(manifest_data, f, sort_keys=False)
+
+    def finalize_manifest(self):
+        with open(self.manifest_path, "r") as f:
+            manifest_data = yaml.safe_load(f)
+
+        farm_id = 0
+        field_id = 0
+
+        manifest_data["farm_id"] = farm_id
+        manifest_data["field_id"] = field_id
+        manifest_data["session_complete"] = True
+        manifest_data["session_finish_timestamp"] = self._now_sec()
+
+        with open(self.manifest_path, "w") as f:
+            yaml.safe_dump(manifest_data, f, sort_keys=False)
+    
+    def _now_sec(self) -> float:
+        return self.get_clock().now().nanoseconds / 1e9
+
 
 
 def main():
