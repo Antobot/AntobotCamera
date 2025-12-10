@@ -14,22 +14,10 @@ find_package(builtin_interfaces REQUIRED)
 # Message / Service / Action Files
 # ------------------------------
 set(MSG_FILES
-  "msg/TransferStatus.msg"
-  "msg/SessionTransferItem.msg"
 )
 
 set(SRV_FILES
-  "srv/CameraRecord.srv"
-  "srv/CamManager.srv"
-  "srv/DeleteSessions.srv"
-  "srv/GetAvailability.srv"
-  "srv/GetBandwidth.srv"
-  "srv/GetSessionTransferList.srv"
-  "srv/StartTransfer.srv"
-  "srv/CreateSession.srv"
-  "srv/GetSessionStatus.srv"
-  "srv/GetFreeSpace.srv"
-  "msg/RecordStatus.msg"
+  "srv/ScoutingCommand.srv"
 )
 # ------------------------------
 # Generate ROS interfaces

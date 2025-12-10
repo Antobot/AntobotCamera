@@ -1,5 +1,0 @@
-# request
-antobot_camera_msgs/SessionTransferItem[] session_list
----
-bool success 
-string message

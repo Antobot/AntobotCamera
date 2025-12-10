@@ -1,5 +1,0 @@
-# request
-string destination
----
-bool available 
-string message
