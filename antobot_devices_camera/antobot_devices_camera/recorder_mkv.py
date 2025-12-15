@@ -67,12 +67,6 @@ class RgbdMkvWriter:
         self.depth_stream.pix_fmt = "gray16le"
         # Intra-only style; FFV1 is inherently intra, but g=1 keeps keyframes each frame
         self.depth_stream.codec_context.gop_size = 1
-        # Put depth-specific metadata on the depth stream too
-        if depth_scale is not None:
-            self.depth_stream.metadata["depth_scale"] = str(depth_scale)
-        if color_intrinsics is not None:
-            self.depth_stream.metadata["color_intrinsics_json"] = json.dumps(color_intrinsics)
-        self.depth_stream.metadata["stream"] = "depth_gray16le"
 
 
     def write(self, bgr_frame: np.ndarray, depth_u16: np.ndarray):
@@ -188,7 +182,19 @@ class Recorder:
         if self._running:
             print("[WARN] Recorder already running, ignoring start()")
             return
-        self.cam.start()
+        try:
+            self.cam.start()
+        except Exception as e:
+            for i in range(3):
+                print(f"[Recorder Warning] Camera failed to start, retrying soft reset ({i+1}/3): {e}")
+                try:
+                    self.cam.soft_restart()
+                    break
+                except Exception as e2:
+                    pass
+            else:
+                raise RuntimeError("Recorder failed to start camera after retries.") from e   
+
         self._stop.clear()
 
         # Pre-open MKV with metadata from camera

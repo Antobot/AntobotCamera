@@ -28,3 +28,11 @@ gps:
   topic: /antobot_gps
 
 recording_path: /home/scouting/ros2_ws/data/
+
+transfer:
+  rec_dir: "/home/scouting/acData/camera/data/"
+  log_dir: "/home/scouting/acData/camera/data/"
+  SERVER_IP: "192.168.9.78"
+  server_port: 22
+  SERVER_USER: "fubinzhang"
+  REMOTE_SAVING_PATH: "/home/fubinzhang/serverInsight/data/ori/DriscollsCNLJ/"
