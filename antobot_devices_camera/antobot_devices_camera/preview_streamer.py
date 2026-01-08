@@ -225,5 +225,5 @@ class PreviewStreamer:
 
         # app event loop
         web.run_app(
-            app, access_log=None, host=host, port=port,
+            app, access_log=None, host=host, port=port, handle_signals=False
         )
