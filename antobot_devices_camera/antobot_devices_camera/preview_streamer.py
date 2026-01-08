@@ -25,14 +25,108 @@
 
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# import logging
+
+# # Set logging to debug to see internal library errors
+# logging.basicConfig(level=logging.DEBUG)
 
 import asyncio
 import json
 import uuid
+import math
+import numpy as np
 
 from aiohttp import web
-from aiortc import RTCPeerConnection, RTCSessionDescription
+from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, RTCRtpSender
 import aiohttp_cors
+from av import VideoFrame
+
+class CameraStreamTrack(VideoStreamTrack):
+    """
+    A video track that captures frames from a callback to the latest pi camera request
+    """
+    def __init__(self, read_array_callback, frame_dims):
+        """
+        Initialise a CameraStreamTrack
+
+        Args:
+            read_array_callback (callback): callback to read frame from the camera
+            frame_dims (tuple): dimensions of camera frame (height, width)   
+        """
+        super().__init__()
+        
+        # Callback to read frame from the camera
+        self.read_frame = read_array_callback
+        
+        # Dimensions that the camera records at
+        # (height, width) (assuming portrait after a 90 deg rotation)
+        self.camera_dims = frame_dims
+        
+        # Placeholder for stream dimensions, calculated and updated when stream is requested
+        # (height, width)
+        self.stream_dims = self.camera_dims
+        
+
+    def set_size(self, width, height):
+        """
+        Calculates and saves the appropriate stream size given the dimensions of the container on the webpage.
+
+        Args:
+            width (int): maximum width in px permitted for the stream 
+            height (int): maximum height in px permitted for the stream       
+        """
+        # container dims on webpage
+        hc = height
+        wc = width
+
+        # camera frame dims
+        hf = self.camera_dims[0]
+        wf = self.camera_dims[1]
+
+        # set stream size to limiting height/width
+        if hf/hc > wf/wc:
+            height = hc
+            width = math.floor(wf/hf * height)
+        else:
+            width = wc
+            height = math.floor(hf/wf * width)
+
+        self.stream_dims = (height, width)
+
+    async def recv(self):
+        """
+        Returns frame for webRTC stream when called.
+
+        Reads frame from camera using provided callback, rotates and resizes. 
+        Returns green frame if the callback doesn't yield a frame.
+
+        Returns:
+            video_frame (VideoFrame): encoded frame   
+        """
+        pts, time_base = await self.next_timestamp()
+
+        # Read latest frame from RPiInsightCam
+        frame = self.read_frame()  
+
+        # If frame is none, return green
+        if frame is not None:
+            video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
+            video_frame = video_frame.reformat(self.stream_dims[1], self.stream_dims[0])
+        else:
+            video_frame = VideoFrame(width=self.stream_dims[1], height=self.stream_dims[0])
+
+        video_frame.pts = pts
+        video_frame.time_base = time_base
+        
+        return video_frame
+
+    def stop(self):
+        # catch stop from receiver and keep alive
+        print('CameraStreamTrack stop caught. Keeping alive.')
+
+    def close(self):
+        print('Stopping CameraStreamTrack.')
+        super().stop()
 
 
 class PreviewStreamer:
@@ -56,6 +150,7 @@ class PreviewStreamer:
 
     async def offer(self, request):
         params = await request.json()
+        cam_id = request.match_info.get("cam_id")
         offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
 
         pc = RTCPeerConnection()
@@ -69,17 +164,17 @@ class PreviewStreamer:
 
         @pc.on("connectionstatechange")
         async def on_connectionstatechange():
-            log_info("Connection state is %s", pc.connectionState)
+            log_info(f"Connection state is {pc.connectionState}")
             if pc.connectionState == "failed":
                 await pc.close()
                 self.pcs.discard(pc)
-
-        # Setup and add track to connection         
-        if self.track_reference is not None:
-            self.track_reference.set_size(params["width"], params["height"])
-            pc.addTrack(self.track_reference)
+        track_reference = self.track_reference.get(cam_id)
+        if track_reference:
+            track_reference.set_size(params["width"], params["height"])
+            pc.addTrack(track_reference)
+            log_info(f"Added track for {cam_id}")
         else:
-            log_info("Tried to add track but track is None")
+            log_info(f"No track found for {cam_id}")
             
         # handle offer
         await pc.setRemoteDescription(offer)
@@ -108,7 +203,7 @@ class PreviewStreamer:
 
     def run(self):
         """
-        Run the server to provide the /offer resource and handle requests.
+        Run the server to provide the /cam_id resource and handle requests.
         """
                
         app = web.Application()
@@ -122,7 +217,7 @@ class PreviewStreamer:
                     allow_headers="*",
                 )
         })
-        resource = cors.add(app.router.add_resource("/offer"))
+        resource = cors.add(app.router.add_resource("/{cam_id}"))
         cors.add(resource.add_route("POST", self.offer))
 
         host = '0.0.0.0'

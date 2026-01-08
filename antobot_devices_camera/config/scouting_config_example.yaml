@@ -1,0 +1,38 @@
+# Copyright (c) 2025, ANTOBOT LTD.
+# All rights reserved.
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+# # # Code Description: This example configuration file includes camera specific information. Make a copy of this file in the 
+#                       same directory (antobot_platform_robot/config) with file name of robot_config.yaml
+#                       This file is included in github repository.
+
+# Author:       jinhuan.liu@antobot.ai
+# # # #  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+camera:
+  left:
+    type: realsense
+    port_core: "/usb2/2-1/2-1.4/2-1.4:1.0"
+    params:
+      framerate: 30
+    light_topic: /antobot_devices_camera/left_scouting_light
+  right:
+    type: realsense
+    port_core: "/usb2/2-1/2-1.3/2-1.3:1.0"    
+    params:
+      framerate: 30
+    light_topic: /antobot_devices_camera/right_scouting_light
+
+gps:
+  topic: /antobot_gps
+
+recording_path: /home/scouting/ros2_ws/data/
+
+transfer:
+  rec_dir: "/home/scouting/acData/camera/data/"
+  log_dir: "/home/scouting/acData/camera/data/"
+  SERVER_IP: "192.168.9.78"
+  server_port: 22
+  SERVER_USER: "fubinzhang"
+  REMOTE_SAVING_PATH: "/home/fubinzhang/serverInsight/data/ori/DriscollsCNLJ/"
