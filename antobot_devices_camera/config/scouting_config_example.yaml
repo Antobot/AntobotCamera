@@ -10,6 +10,9 @@
 # Author:       jinhuan.liu@antobot.ai
 # # # #  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
+
+ROBOT_ID: 1
+
 camera:
   left:
     type: realsense
@@ -27,4 +30,10 @@ camera:
 gps:
   topic: /antobot_gps
 
-recording_path: /home/scouting/ros2_ws/data/
+recording_path: /home/scouting/acData/camera/data/
+
+transfer:
+  SERVER_IP: "192.168.9.78"
+  server_port: 22
+  SERVER_USER: "fubinzhang"
+  REMOTE_SAVING_PATH: "/home/fubinzhang/serverInsight/data/ori/DriscollsCNLJ/"
