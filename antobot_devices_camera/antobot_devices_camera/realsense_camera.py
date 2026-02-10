@@ -68,9 +68,10 @@ class CameraDriver:
         """Applies specialized configurations (like low-light settings) to the sensors."""
         
         # --- Tuned Parameters ---
-        AUTO_EXPOSURE_LIMIT = 4000.0  # us
+        AUTO_EXPOSURE_LIMIT = 8000.0  # us
         AUTO_GAIN_LIMIT = 30.0
-        WHITE_BALANCE_KELVIN = 4600  
+        WHITE_BALANCE_KELVIN = 4600 
+        TARGET_INTENSITY = 400 
         # -----------------------------
         
         try:
@@ -92,35 +93,50 @@ class CameraDriver:
                 
                 # Color Sensor Adjustments (Night Vision/Low-Light)
                     
-                # 1. Ensure Auto-Exposure is ENABLED
+                # # 1. Ensure Auto-Exposure is ENABLED
                 if s.supports(rs.option.enable_auto_exposure):
                     s.set_option(rs.option.enable_auto_exposure, 1)
                 
-                # 2. Set the Auto Exposure Limit (in microseconds)
-                if s.supports(rs.option.auto_exposure_limit):
-                    max_limit = s.get_option_range(rs.option.auto_exposure_limit).max
-                    target_limit = min(max_limit, AUTO_EXPOSURE_LIMIT)
-                    s.set_option(rs.option.auto_exposure_limit, target_limit)
+                # # 2. Set the Auto Exposure Limit (in microseconds)
+                # if s.supports(rs.option.auto_exposure_limit):
+                #     max_limit = s.get_option_range(rs.option.auto_exposure_limit).max
+                #     target_limit = min(max_limit, AUTO_EXPOSURE_LIMIT)
+                #     s.set_option(rs.option.auto_exposure_limit, target_limit)
 
-                # 3. Set the Auto Gain Limit
-                if s.supports(rs.option.auto_gain_limit):
-                    max_gain = s.get_option_range(rs.option.auto_gain_limit).max
-                    target_gain = min(max_gain, AUTO_GAIN_LIMIT)
-                    s.set_option(rs.option.auto_gain_limit, target_gain)
-                '''
-                # 4. Optional: Enable Backlight Compensation
-                if s.supports(rs.option.backlight_compensation):
-                    s.set_option(rs.option.backlight_compensation, 1)
+                # # 3. Set the Auto Gain Limit
+                # if s.supports(rs.option.auto_gain_limit):
+                #     max_gain = s.get_option_range(rs.option.auto_gain_limit).max
+                #     target_gain = min(max_gain, AUTO_GAIN_LIMIT)
+                #     s.set_option(rs.option.auto_gain_limit, target_gain)
+                
 
                 # 5. White Balance (Manual)
-                    # First, disable auto white balance
-                    if s.supports(rs.option.enable_auto_white_balance):
-                        s.set_option(rs.option.enable_auto_white_balance, 0)
+                # First, disable auto white balance
+                if s.supports(rs.option.enable_auto_white_balance):
+                    s.set_option(rs.option.enable_auto_white_balance, 0)
+                
+                # Then, set the specific Kelvin value
+                if s.supports(rs.option.white_balance):
+                    s.set_option(rs.option.white_balance, WHITE_BALANCE_KELVIN)
+
+            try:
+                # Cast the device to an advanced mode object
+                adv_mode = rs.rs400_advanced_mode(self.selected_device)
+                
+                # Get current AE controls
+                ae_ctrl = adv_mode.get_ae_control()
+                
+                # Modify the Mean Intensity Set Point
+                ae_ctrl.meanIntensitySetPoint = TARGET_INTENSITY
+                
+                # Apply it back
+                adv_mode.set_ae_control(ae_ctrl)
+                print(f"Advanced Mode: Mean Intensity Set Point set to {TARGET_INTENSITY}")
+
                     
-                    # Then, set the specific Kelvin value
-                    if s.supports(rs.option.white_balance):
-                        s.set_option(rs.option.white_balance, WHITE_BALANCE_KELVIN)
-                '''
+            except Exception as e:
+                print(f"Warning: Failed to set Advanced Mode options: {e}")
+                
         except Exception as e:
             print(f"Warning: Failed to set sensor options: {e}")
     
@@ -327,9 +343,9 @@ class CameraDriver:
 
             # update ROI every 3 seconds
             
-            current_time = time.time()
-            if self._last_roi_update_time is None or (current_time - self._last_roi_update_time > 3):
-                roi_upper, roi_lower = self.set_col_roi(depth_u16, max_depth_m=0.6, buffer=50)
-                self._last_roi_update_time = current_time
+            # current_time = time.time()
+            # if self._last_roi_update_time is None or (current_time - self._last_roi_update_time > 3):
+            #     roi_upper, roi_lower = self.set_col_roi(depth_u16, max_depth_m=0.6, buffer=50)
+            #     self._last_roi_update_time = current_time
            
             yield color_bgr, depth_u16

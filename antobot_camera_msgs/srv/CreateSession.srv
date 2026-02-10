@@ -1,7 +1,0 @@
-# request
-string session_description
-
----
-# response
-bool success
-string message
