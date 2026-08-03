@@ -143,7 +143,7 @@ class CameraStreamTrack(VideoStreamTrack):
         
 
 class RPiInsightCamera:
-    def __init__(self, preview=False, raw=False, framerate=30, frame_dims=None, cam={'num': 0, 'model': 'imx296'}, rotation=0):
+    def __init__(self, preview=False, raw=False, framerate=30, frame_dims=None, cam={'num': 0, 'model': 'imx296'}, rotation=0, zoom=1.0):
         """
         Initialise Raspberry Pi camera configured for robot scouting.
 
@@ -170,6 +170,7 @@ class RPiInsightCamera:
         
         self.cam_num = cam['num']
         self.cam_model = cam['model']
+        self.zoom = zoom
 
         self.frame_lock = threading.Lock() # lock whilst a frame is being processed/encoded 
         self.request_lock = threading.Lock() # lock for reading/writing picamera requests
@@ -253,6 +254,15 @@ class RPiInsightCamera:
         
         # Load and set camera control settings
         cam_controls = self.load_camera_controls()
+        if self.zoom > 1.0:
+            mx, my, mw, mh = self.cam.camera_properties['ScalerCropMaximum']
+            cw = int(mw / self.zoom)
+            ch = int(mh / self.zoom)
+            cx = mx + (mw - cw) // 2
+            cy = my + (mh - ch) // 2
+            self.scaler_crop = (cx, cy, cw, ch)
+        else:
+            self.scaler_crop = None
         self.cam.set_controls(cam_controls)
 
         # Get camera config to set up encoders
@@ -413,9 +423,13 @@ class RPiInsightCamera:
         #     self.cam.start_preview(Preview.QTGL)
 
         self.cam.start()
-        
+
         # Sleep for 1 second to allow camera algorithms to settle before any recording can start
-        time.sleep(1) 
+        time.sleep(1)
+
+        # Apply ScalerCrop after start — PiSP IPA resets it to default during initialisation
+        if self.scaler_crop is not None:
+            self.cam.set_controls({'ScalerCrop': self.scaler_crop})
 
         # Flush camera requests and set initial request
         self.latest_request = self.cam.capture_request(flush=True)

@@ -105,19 +105,20 @@ class camRecord:
                     framerate = params_camera[cam_type]["framerate"] if "framerate" in params_camera[cam_type] else 30
                     frame_dims = tuple(params_camera[cam_type]["frame_dims"]) if "frame_dims" in params_camera[cam_type] else None
                     rotation = params_camera[cam_type]["rotation"] if "rotation" in params_camera[cam_type] else {'0': 0, '1': 0}
+                    zoom = params_camera[cam_type]["zoom"] if "zoom" in params_camera[cam_type] else 1.0
 
                     if "dual" in params_camera[cam_type] and params_camera[cam_type]["dual"] is True:
                         # make 2 cameras
                         self.cams = [
-                            RPiInsightCamera(preview=self.enable_stream, raw=raw, framerate=framerate, frame_dims=frame_dims, cam=avaiable_cams[0], rotation=rotation['0']),
-                            RPiInsightCamera(preview=self.enable_stream, raw=raw, framerate=framerate, frame_dims=frame_dims, cam=avaiable_cams[1], rotation=rotation['1'])
+                            RPiInsightCamera(preview=self.enable_stream, raw=raw, framerate=framerate, frame_dims=frame_dims, cam=avaiable_cams[0], rotation=rotation['0'], zoom=zoom),
+                            RPiInsightCamera(preview=self.enable_stream, raw=raw, framerate=framerate, frame_dims=frame_dims, cam=avaiable_cams[1], rotation=rotation['1'], zoom=zoom)
                         ]
 
                     else:
                         #make one camera
                         self.cams = [
-                            RPiInsightCamera(preview=self.enable_stream, raw=raw, framerate=framerate, frame_dims=frame_dims, cam=avaiable_cams[0], rotation=rotation['0'])
-                            , 
+                            RPiInsightCamera(preview=self.enable_stream, raw=raw, framerate=framerate, frame_dims=frame_dims, cam=avaiable_cams[0], rotation=rotation['0'], zoom=zoom)
+                            ,
                         ]
 
                     # only supporting one camera
